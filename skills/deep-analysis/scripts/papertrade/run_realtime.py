@@ -272,6 +272,7 @@ def main() -> None:
     ap.add_argument("--include-positions", action="store_true", help="ticker universe 额外包含当前模拟持仓")
     ap.add_argument("--quote-only-between-full", action="store_true", help="非 full-refresh 轮次只刷新 quote_snapshots，不跑缓存决策循环")
     ap.add_argument("--quote-timeout-seconds", type=float, default=None, help="真实 quote provider 单票限时秒数，0 表示不启用限时保护")
+    ap.add_argument("--strategy-refresh-depth", choices=["lite", "medium", "deep"], default=None, help="行情覆盖后重算策略层使用的深度")
     ap.add_argument("--after-close-rebuild-candidate-pool", action="store_true", help="收盘后用本地事实源重建候选池")
     ap.add_argument("--after-close-max-candidates", type=int, default=50, help="收盘后候选池重建最多保留多少只")
 
@@ -279,6 +280,11 @@ def main() -> None:
     quote_group.add_argument("--quote-overlay", dest="quote_overlay", action="store_true", help="启用实时行情覆盖")
     quote_group.add_argument("--no-quote-overlay", dest="quote_overlay", action="store_false", help="禁用实时行情覆盖")
     ap.set_defaults(quote_overlay=None)
+
+    strategy_refresh_group = ap.add_mutually_exclusive_group()
+    strategy_refresh_group.add_argument("--strategy-refresh", dest="strategy_refresh", action="store_true", help="行情覆盖后重算策略信号与短线模块")
+    strategy_refresh_group.add_argument("--no-strategy-refresh", dest="strategy_refresh", action="store_false", help="行情覆盖后不重算策略信号")
+    ap.set_defaults(strategy_refresh=None)
 
     watcher_group = ap.add_mutually_exclusive_group()
     watcher_group.add_argument("--watcher-overlay", dest="watcher_overlay", action="store_true", help="启用模拟盯盘人物修正")
@@ -313,6 +319,10 @@ def main() -> None:
         else getattr(cfg.realtime, "quote_timeout_seconds", 8.0)
     )
     cfg.realtime.quote_timeout_seconds = quote_timeout_seconds
+    if args.strategy_refresh is not None:
+        cfg.realtime.strategy_refresh = bool(args.strategy_refresh)
+    if args.strategy_refresh_depth:
+        cfg.realtime.strategy_refresh_depth = args.strategy_refresh_depth
     if refresh_every_loops <= 0:
         refresh_every_loops = 1
 

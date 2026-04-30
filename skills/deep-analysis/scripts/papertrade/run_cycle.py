@@ -42,6 +42,7 @@ from papertrade.metrics import (  # noqa: E402
 from papertrade.notifier import emit_alert, make_alert_payload  # noqa: E402
 from papertrade.outbox import enqueue_outbox_event  # noqa: E402
 from papertrade.quote_snapshots import record_quote_snapshot  # noqa: E402
+from papertrade.realtime_strategy import refresh_realtime_strategy_from_snapshot  # noqa: E402
 from papertrade.runtime_store import (  # noqa: E402
     DEFAULT_RUNTIME_LEASE_NAME,
     DEFAULT_RUNTIME_LEASE_TTL_MS,
@@ -350,6 +351,7 @@ def run_cycle(
             market = bundle.get("market", market)
             pos = get_position(conn, ticker)
             quote_snapshot: dict[str, Any] | None = None
+            realtime_strategy_refresh: dict[str, Any] | None = None
 
             if realtime_quote_overlay:
                 snapshot = fetch_realtime_snapshot(
@@ -377,6 +379,13 @@ def run_cycle(
                 if q_age is not None:
                     quote_freshness_values.append(int(q_age))
                 inject_snapshot_into_bundle(bundle, snapshot)
+                if bool(getattr(cfg.realtime, "strategy_refresh", True)):
+                    realtime_strategy_depth = str(getattr(cfg.realtime, "strategy_refresh_depth", "") or cfg.depth or "deep")
+                    realtime_strategy_refresh = refresh_realtime_strategy_from_snapshot(
+                        bundle,
+                        snapshot,
+                        depth=realtime_strategy_depth,
+                    )
 
             decision = evaluate_decision(
                 ticker,
@@ -554,6 +563,7 @@ def run_cycle(
                     "quote_overlay_applied": bool(
                         (((bundle.get("_papertrade_runtime") or {}).get("quote_overlay_applied")))
                     ),
+                    "realtime_strategy_refresh": realtime_strategy_refresh,
                     "gates": decision.gates,
                     "penalties": decision.penalties,
                 }

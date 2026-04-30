@@ -42,6 +42,8 @@
     "sleep_on_error_seconds": 15,
     "quote_timeout_seconds": 8.0,
     "quote_overlay": true,
+    "strategy_refresh": true,
+    "strategy_refresh_depth": "deep",
     "watcher_overlay": true
   },
   "watcher": {

@@ -53,6 +53,8 @@ class RealtimeConfig:
     sleep_on_error_seconds: int = 15
     quote_timeout_seconds: float = 8.0
     quote_overlay: bool = False
+    strategy_refresh: bool = True
+    strategy_refresh_depth: str = "deep"
     watcher_overlay: bool = False
 
 
