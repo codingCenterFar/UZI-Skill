@@ -18,6 +18,7 @@ from papertrade.ledger import init_db  # noqa: E402
 from papertrade.quote_snapshots import (  # noqa: E402
     get_latest_quote_snapshots,
     get_quote_batch,
+    record_quote_snapshot,
     refresh_quote_snapshots,
     resolve_quote_universe,
 )
@@ -191,6 +192,66 @@ def test_quote_snapshot_api_routes_use_uniform_envelopes(monkeypatch):
     )
     assert batch["ok"] is True
     assert batch["data"]["quote_batch_id"] == "qbatch_api_001"
+
+
+def test_default_realtime_quote_prefers_direct_http_before_full_basic(monkeypatch):
+    calls: list[str] = []
+
+    def fake_direct(ticker: str) -> dict[str, Any]:
+        calls.append(f"direct:{ticker}")
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "market": "A",
+            "name": "fast quote",
+            "price": 12.3,
+            "change_pct": 1.5,
+            "source": "direct_http_pytest",
+        }
+
+    def fail_basic(*_: Any, **__: Any) -> dict[str, Any]:
+        raise AssertionError("full fetch_basic should not run when direct quote succeeds")
+
+    monkeypatch.setattr(market_snapshot, "_fetch_direct_http_snapshot", fake_direct)
+    monkeypatch.setattr(market_snapshot, "fetch_basic", fail_basic)
+
+    snap = market_snapshot._fetch_realtime_snapshot_inline("601778.SH")
+
+    assert snap["ok"] is True
+    assert snap["ticker"] == "601778.SH"
+    assert snap["price"] == 12.3
+    assert snap["source"] == "direct_http_pytest"
+    assert calls == ["direct:601778.SH"]
+
+
+def test_runtime_quote_overlay_can_persist_latest_snapshot_for_dashboard():
+    conn = _conn()
+    init_db(conn, initial_cash=1_000_000.0)
+
+    recorded = record_quote_snapshot(
+        conn,
+        ticker="601778.SH",
+        quote_batch_id="qbatch_runtime_001",
+        snapshot={
+            "ok": True,
+            "ticker": "601778.SH",
+            "market": "A",
+            "name": "晶科科技",
+            "price": 6.5,
+            "change_pct": -6.61,
+            "source": "tencent_qt:sh601778",
+        },
+        request_context={"loop_id": "loop_runtime_001", "overlay": "realtime_quote"},
+    )
+
+    assert recorded["status"] == "ok"
+    assert recorded["price"] == 6.5
+    latest = get_latest_quote_snapshots(conn, tickers=["601778.SH"])
+    item = latest["items"][0]
+    assert item["ticker"] == "601778.SH"
+    assert item["status"] == "ok"
+    assert item["source"] == "tencent_qt:sh601778"
+    assert item["request_context"]["overlay"] == "realtime_quote"
 
 
 def test_default_quote_provider_timeout_records_failed_snapshot(monkeypatch):

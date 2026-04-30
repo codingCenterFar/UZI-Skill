@@ -41,6 +41,7 @@ from papertrade.metrics import (  # noqa: E402
 )
 from papertrade.notifier import emit_alert, make_alert_payload  # noqa: E402
 from papertrade.outbox import enqueue_outbox_event  # noqa: E402
+from papertrade.quote_snapshots import record_quote_snapshot  # noqa: E402
 from papertrade.runtime_store import (  # noqa: E402
     DEFAULT_RUNTIME_LEASE_NAME,
     DEFAULT_RUNTIME_LEASE_TTL_MS,
@@ -356,6 +357,22 @@ def run_cycle(
                     timeout_seconds=getattr(cfg.realtime, "quote_timeout_seconds", None),
                 )
                 quote_snapshot = snapshot
+                try:
+                    record_quote_snapshot(
+                        conn,
+                        ticker=ticker,
+                        snapshot=snapshot,
+                        quote_batch_id=f"qbatch_{loop_id[:12]}_{parse_ticker(ticker).code}",
+                        source="runtime_quote_overlay",
+                        request_context={
+                            "run_id": run_id,
+                            "loop_id": loop_id,
+                            "session_id": runtime_session_id,
+                            "overlay": "realtime_quote",
+                        },
+                    )
+                except Exception as e:
+                    quote_snapshot = {**snapshot, "persist_error": str(e)}
                 q_age = quote_freshness_ms_from_snapshot(snapshot)
                 if q_age is not None:
                     quote_freshness_values.append(int(q_age))

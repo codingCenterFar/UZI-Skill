@@ -200,6 +200,27 @@ def _store_quote_snapshot(
     return _row_to_quote(row)
 
 
+def record_quote_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str,
+    snapshot: dict[str, Any],
+    quote_batch_id: str | None = None,
+    source: str = "runtime_quote_overlay",
+    request_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    batch_id = str(quote_batch_id or new_id("qbatch"))
+    context = {"source": source, **(request_context or {})}
+    return _store_quote_snapshot(
+        conn,
+        quote_batch_id=batch_id,
+        ticker=ticker,
+        snapshot=snapshot,
+        request_context=context,
+        created_at_ms=now_ms(),
+    )
+
+
 def refresh_quote_snapshots(
     conn: sqlite3.Connection,
     *,

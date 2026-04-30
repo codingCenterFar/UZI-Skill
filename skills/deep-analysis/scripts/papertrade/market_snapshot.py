@@ -81,19 +81,91 @@ def _snapshot_from_basic(ticker: str, basic: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot_from_quote(ticker: str, quote: dict[str, Any], *, source: str = "direct_http") -> dict[str, Any]:
+    ti = parse_ticker(ticker)
+    price = _f(quote.get("price"), 0.0)
+    prev_close = _f(quote.get("prev_close"), 0.0)
+    change_pct = quote.get("change_pct")
+    if change_pct in (None, "") and price > 0 and prev_close > 0:
+        change_pct = round((price / prev_close - 1) * 100, 2)
+    return {
+        "ok": price > 0,
+        "ticker": ti.full,
+        "market": ti.market,
+        "price": price,
+        "change_pct": change_pct,
+        "name": quote.get("name"),
+        "open": quote.get("open"),
+        "high": quote.get("high"),
+        "low": quote.get("low"),
+        "prev_close": quote.get("prev_close"),
+        "volume": quote.get("volume"),
+        "amount": quote.get("amount"),
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "source": quote.get("source") or source,
+        "provider": source,
+    }
+
+
+def _fetch_direct_http_snapshot(ticker: str) -> dict[str, Any]:
+    """Fast quote-only path for realtime loops.
+
+    The full `fetch_basic` path may spend many seconds on rich profile sources
+    before reaching Tencent/Sina fallbacks. Realtime papertrade needs the
+    opposite order: quote first, fundamentals later.
+    """
+    ti = parse_ticker(ticker)
+    try:
+        from lib import providers
+
+        provider = providers.get("direct_http")
+        if provider is None or not provider.is_available():
+            return _failure_snapshot(
+                ti.full,
+                error_code="DIRECT_HTTP_UNAVAILABLE",
+                reason="direct_http provider is unavailable",
+                source="direct_http",
+            )
+        quote = provider.fetch_quote(ti.code, ti.market)
+        snapshot = _snapshot_from_quote(ti.full, quote if isinstance(quote, dict) else {}, source="direct_http")
+        if snapshot.get("ok"):
+            return snapshot
+        return _failure_snapshot(
+            ti.full,
+            error_code="DIRECT_HTTP_EMPTY_PRICE",
+            reason="direct_http returned no usable price",
+            source=snapshot.get("source") or "direct_http",
+        )
+    except Exception as e:
+        return _failure_snapshot(
+            ti.full,
+            error_code="DIRECT_HTTP_QUOTE_FAILED",
+            reason=str(e),
+            source="direct_http",
+        )
+
+
 def _fetch_realtime_snapshot_inline(ticker: str) -> dict[str, Any]:
     ti = parse_ticker(ticker)
+    direct = _fetch_direct_http_snapshot(ti.full)
+    if direct.get("ok"):
+        return direct
+
     try:
         basic = fetch_basic(ti) or {}
     except Exception as e:
         return _failure_snapshot(
             ti.full,
             error_code="QUOTE_PROVIDER_EXCEPTION",
-            reason=str(e),
+            reason=f"{str(e)}; direct_http={direct.get('reason')}",
             source="fetch_basic",
         )
 
-    return _snapshot_from_basic(ti.full, basic if isinstance(basic, dict) else {})
+    snapshot = _snapshot_from_basic(ti.full, basic if isinstance(basic, dict) else {})
+    if not snapshot.get("ok"):
+        snapshot["direct_http_error_code"] = direct.get("error_code")
+        snapshot["direct_http_error_reason"] = direct.get("reason")
+    return snapshot
 
 
 def _quote_worker(ticker: str, result_queue: Any) -> None:
