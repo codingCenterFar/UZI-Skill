@@ -104,6 +104,6 @@ def _write_cache(ticker: str, raw: dict) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "raw_data.json"
     try:
-        cache_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     except Exception as e:
         print(f"   ⚠️ 写 cache 失败: {e}")

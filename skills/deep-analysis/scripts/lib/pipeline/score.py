@@ -64,25 +64,25 @@ def score_from_cache(ticker: str) -> dict:
 
     # 重新写回 raw_data.json（autofill 已修改）
     raw_path.write_text(
-        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(raw, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
 
     # 22 维 scoring
     dims_scored = rrt.score_dimensions(raw)
     (cache_dir / "dimensions.json").write_text(
-        json.dumps(dims_scored, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(dims_scored, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
 
     # 51 评委 panel
     panel = rrt.generate_panel(dims_scored, raw)
     (cache_dir / "panel.json").write_text(
-        json.dumps(panel, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(panel, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
 
     # Synthesis（不 merge agent_analysis · stage2/synthesize_and_render 阶段做）
     synthesis = rrt.generate_synthesis(raw, dims_scored, panel, agent_analysis=None)
     (cache_dir / "synthesis.json").write_text(
-        json.dumps(synthesis, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(synthesis, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
 
     return {
