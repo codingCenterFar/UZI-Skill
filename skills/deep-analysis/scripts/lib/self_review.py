@@ -579,6 +579,92 @@ def check_debate_bull_bear_populated(ctx: dict) -> list[Issue]:
     return issues
 
 
+def check_strategy_schema(ctx: dict) -> list[Issue]:
+    """Phase 0 · strategy layer schema sanity.
+
+    Non-blocking by design: strategy layer is additive. We only emit warning/info.
+    """
+    issues = []
+    sm = ctx.get("strategy_meta")
+    ss = ctx.get("strategy_signals")
+
+    if sm is None and ss is None:
+        issues.append(Issue(
+            severity="warning",
+            category="self-check",
+            dim="strategy",
+            issue="strategy layer missing (strategy_meta.json / strategy_signals.json not found)",
+            evidence="phase0 expects strategy_* outputs from stage1",
+            suggested_fix="重跑 stage1；若旧 cache 可忽略该 warning",
+        ))
+        return issues
+
+    if not isinstance(sm, dict):
+        issues.append(Issue(
+            severity="warning",
+            category="self-check",
+            dim="strategy",
+            issue="strategy_meta.json is not a dict",
+            evidence=f"type={type(sm).__name__}",
+            suggested_fix="检查 strategy engine 写盘逻辑",
+        ))
+    if not isinstance(ss, dict):
+        issues.append(Issue(
+            severity="warning",
+            category="self-check",
+            dim="strategy",
+            issue="strategy_signals.json is not a dict",
+            evidence=f"type={type(ss).__name__}",
+            suggested_fix="检查 strategy engine 写盘逻辑",
+        ))
+        return issues
+
+    signals = ss.get("signals")
+    if not isinstance(signals, list):
+        issues.append(Issue(
+            severity="warning",
+            category="self-check",
+            dim="strategy",
+            issue="strategy_signals.signals is not a list",
+            evidence=f"type={type(signals).__name__}",
+            suggested_fix="修复 strategy signal schema",
+        ))
+    else:
+        req = {"strategy_id", "signal", "strength", "confidence", "horizon", "regime_fit", "explain", "evidence"}
+        for i, s in enumerate(signals[:5]):
+            if not isinstance(s, dict):
+                issues.append(Issue(
+                    severity="warning",
+                    category="self-check",
+                    dim="strategy",
+                    issue=f"strategy_signals.signals[{i}] is not a dict",
+                    evidence=f"type={type(s).__name__}",
+                    suggested_fix="修复 strategy signal schema",
+                ))
+                continue
+            missing = [k for k in req if k not in s]
+            if missing:
+                issues.append(Issue(
+                    severity="warning",
+                    category="self-check",
+                    dim="strategy",
+                    issue=f"strategy_signals.signals[{i}] missing required keys",
+                    evidence=",".join(missing),
+                    suggested_fix="补齐 schema 字段后重跑 stage1/stage2",
+                ))
+
+    if isinstance(sm, dict) and sm.get("schema_valid") is False:
+        issues.append(Issue(
+            severity="warning",
+            category="self-check",
+            dim="strategy",
+            issue="strategy schema marked invalid",
+            evidence=str(sm.get("schema_errors", []))[:180],
+            suggested_fix="修复 strategy_engine.validate_signal_schema 报错项",
+        ))
+    return issues
+
+
 CHECKS = [
     check_industry_mapping_sanity,
     check_all_dims_exist,
@@ -597,6 +683,7 @@ CHECKS = [
     check_consensus_formula_sanity,
     check_panel_insights_rendered,
     check_debate_bull_bear_populated,
+    check_strategy_schema,
 ]
 
 
@@ -621,12 +708,18 @@ def review_all(ticker: str, cache_root: str | None = None) -> dict:
     syn = read_task_output(ticker, "synthesis") or {}
     panel = read_task_output(ticker, "panel") or {}
     ag = read_task_output(ticker, "agent_analysis")
+    strategy_features = read_task_output(ticker, "strategy_features")
+    strategy_signals = read_task_output(ticker, "strategy_signals")
+    strategy_meta = read_task_output(ticker, "strategy_meta")
 
     dims = raw.get("dimensions") or {}
     market = raw.get("market", "A")
     ctx = {
         "ticker": ticker, "market": market,
         "raw": raw, "syn": syn, "panel": panel, "ag": ag, "dims": dims,
+        "strategy_features": strategy_features,
+        "strategy_signals": strategy_signals,
+        "strategy_meta": strategy_meta,
     }
 
     all_issues: list[Issue] = []

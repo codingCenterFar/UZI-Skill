@@ -137,6 +137,23 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["debt_ratio"] = _f(health.get("debt_ratio"))
     f["fcf_margin"] = _f(health.get("fcf_margin"))
     f["roic"] = _f(health.get("roic"))
+    f["asset_turnover"] = _f(health.get("asset_turnover"))
+    if f["asset_turnover"] <= 0:
+        f["asset_turnover"] = _f(health.get("total_asset_turnover"))
+    if f["asset_turnover"] <= 0:
+        f["asset_turnover"] = _f(fin.get("asset_turnover"))
+    f["receivable_turnover"] = _f(health.get("receivable_turnover"))
+    if f["receivable_turnover"] <= 0:
+        f["receivable_turnover"] = _f(fin.get("receivable_turnover"))
+    f["inventory_turnover"] = _f(health.get("inventory_turnover"))
+    if f["inventory_turnover"] <= 0:
+        f["inventory_turnover"] = _f(fin.get("inventory_turnover"))
+    f["asset_growth"] = _f(health.get("asset_growth"))
+    if f["asset_growth"] <= -99 or f["asset_growth"] >= 999:
+        f["asset_growth"] = 0.0
+    if abs(f["asset_growth"]) <= 0.01:
+        f["asset_growth"] = _f(fin.get("asset_growth"))
+    f["gross_margin"] = _f(fin.get("gross_margin"), default=_f(health.get("gross_margin_pct"), default=f.get("net_margin", 10) + 18))
     f["fcf_positive"] = f["fcf_margin"] > 0
 
     # Dividend
@@ -159,6 +176,22 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["ytd_return"] = _f(stats.get("ytd_return"))
     f["volatility_1y"] = _f(stats.get("volatility"))
     f["max_drawdown_1y"] = _f(stats.get("max_drawdown"))
+    intraday_micro = kline.get("intraday_micro") or {}
+    f["intraday_minute_bars_count"] = _f(intraday_micro.get("bars_count"))
+    f["intraday_minute_available"] = bool(intraday_micro.get("micro_available"))
+    f["open_auction_ret_pct"] = _f(intraday_micro.get("open_auction_ret_pct"))
+    f["open_15m_ret_pct"] = _f(intraday_micro.get("open_15m_ret_pct"))
+    f["tail_30m_ret_pct"] = _f(intraday_micro.get("tail_30m_ret_pct"))
+    f["open_auction_volume_ratio"] = _f(intraday_micro.get("open_auction_volume_ratio"))
+    f["close_auction_volume_ratio"] = _f(intraday_micro.get("close_auction_volume_ratio"))
+    f["close_auction_jump_pct"] = _f(intraday_micro.get("close_auction_jump_pct"))
+    f["intraday_amplitude_pct"] = _f(intraday_micro.get("intraday_amplitude_pct"))
+    seasonality_1y = kline.get("seasonality_1y") or {}
+    f["seasonality_sample_days"] = _f(seasonality_1y.get("sample_days"))
+    f["thursday_mean_return_pct_1y"] = _f(seasonality_1y.get("thursday_mean_return_pct"))
+    f["month_start_mean_return_pct_1y"] = _f(seasonality_1y.get("month_start_mean_return_pct"))
+    f["month_end_mean_return_pct_1y"] = _f(seasonality_1y.get("month_end_mean_return_pct"))
+    f["spring_festival_window_mean_return_pct_1y"] = _f(seasonality_1y.get("spring_festival_window_mean_return_pct"))
 
     # 52-week position
     candles = kline.get("candles_60d") or []
@@ -325,6 +358,10 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["bvps"] = round(eq / f["shares_outstanding_yi"], 3) if f["shares_outstanding_yi"] > 0 else 0
     # FCF latest (proxy from net_income × 0.8 if not present)
     f["fcf_latest_yi"] = round(latest_ni * 0.8, 2) if latest_ni > 0 else 0
+    # Operating cash flow latest (Dimension 1 returns a compact string like "123.4亿")
+    ocf_text = str(fin.get("fcf") or "")
+    ocf_match = re.search(r"([+\-]?\d+(?:\.\d+)?)", ocf_text)
+    f["operating_cash_flow_latest_yi"] = round(float(ocf_match.group(1)), 2) if ocf_match else 0.0
     # EBITDA (proxy: net_income / 0.6)
     f["ebitda_yi"] = round(latest_ni / 0.6, 2) if latest_ni > 0 else 0
     # Debt and cash (from financial_health if available; else default)
@@ -332,10 +369,24 @@ def extract_features(raw: dict, dims: dict) -> dict:
     f["total_debt_yi"] = _f(health.get("total_debt"), 0) if isinstance(health, dict) else 0
     f["cash_yi"] = _f(health.get("cash"), 0) if isinstance(health, dict) else 0
     # Gross margin (%)
-    f["gross_margin"] = _f(fin.get("gross_margin"), default=f.get("net_margin", 10) + 18)
+    f["gross_margin"] = _f(fin.get("gross_margin"), default=f.get("gross_margin", f.get("net_margin", 10) + 18))
+    # Gross profitability proxy (A-share factor literature style): gross margin x asset turnover
+    if f["asset_turnover"] > 0 and f["gross_margin"] > 0:
+        f["gross_profitability"] = round(f["gross_margin"] * f["asset_turnover"] / 100.0, 3)
+    else:
+        f["gross_profitability"] = round(max(0.0, f["gross_margin"] / 10.0), 3)
     # PS ratio
     rev = f.get("revenue_latest_yi", 0)
     f["ps"] = round(mcap / rev, 2) if rev > 0 else 0
+    # T309 value-enhancement factors
+    f["earnings_yield"] = round(100.0 / f["pe"], 3) if f.get("pe", 0) > 0 else 0.0
+    f["cf_to_price"] = round(f["operating_cash_flow_latest_yi"] / mcap * 100.0, 3) if mcap > 0 else 0.0
+    f["fcf_to_price"] = round(f["fcf_latest_yi"] / mcap * 100.0, 3) if mcap > 0 else 0.0
+    enterprise_value = mcap + f.get("total_debt_yi", 0) - f.get("cash_yi", 0)
+    f["ev_ebitda"] = round(enterprise_value / f["ebitda_yi"], 3) if f.get("ebitda_yi", 0) > 0 else 0.0
+    controller = str(f.get("actual_controller") or "")
+    f["is_state_owned"] = any(k in controller for k in ("国务院", "国资委", "国有", "国资", "财政部", "地方国资"))
+    f["is_below_book"] = f.get("pb", 0) > 0 and f.get("pb", 0) <= 1.0
     # v2.12.1 · 真实计算 industry_growth 和 market_share（原版硬编 default=10 → BCG 永远 Dog）
 
     # industry_growth: 从 industry.growth 文本 regex 解析百分比
@@ -360,7 +411,7 @@ def extract_features(raw: dict, dims: dict) -> dict:
     # Dividend yield from valuation/basic
     f["dividend_yield"] = _f(valuation.get("dividend_yield"), default=0)
     # PEG
-    peg_val = f.get("pe", 0) / f.get("rev_growth_3y", 1) if f.get("rev_growth_3y", 0) > 0 else 99
+    peg_val = f.get("pe", 0) / f.get("revenue_growth_3y_cagr", 1) if f.get("revenue_growth_3y_cagr", 0) > 0 else 99
     f["peg"] = round(peg_val, 2)
     # Gross margin trend flag
     f["gross_margin_expanding"] = False  # default; could be computed from hist

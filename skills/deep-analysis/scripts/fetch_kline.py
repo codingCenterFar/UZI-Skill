@@ -11,6 +11,7 @@
 """
 import json
 import sys
+from datetime import datetime
 from statistics import mean
 
 import akshare as ak  # type: ignore
@@ -142,6 +143,254 @@ def fetch_chip_distribution(ti) -> dict:
         return {"error": str(e)}
 
 
+def _float(v, default=0.0) -> float:
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def fetch_intraday_minutes(ti) -> dict:
+    """分钟级分时（T313）: 1min bars for latest trading day."""
+    if ti.market != "A":
+        return {"bars_count": 0, "minute_bars_1d": [], "note": "minute stream currently A-share only"}
+    try:
+        df = ak.stock_zh_a_hist_min_em(symbol=ti.code, period="1", adjust="")
+    except Exception as e:
+        return {"bars_count": 0, "minute_bars_1d": [], "error": str(e)}
+
+    if df is None or df.empty:
+        return {"bars_count": 0, "minute_bars_1d": []}
+
+    records = df.to_dict("records")
+    rows = []
+    for r in records:
+        t = str(r.get("时间") or r.get("date") or r.get("Date") or "").strip()
+        if not t:
+            continue
+        rows.append(
+            {
+                "time": t,
+                "open": _float(r.get("开盘", r.get("open"))),
+                "close": _float(r.get("收盘", r.get("close"))),
+                "high": _float(r.get("最高", r.get("high"))),
+                "low": _float(r.get("最低", r.get("low"))),
+                "volume": _float(r.get("成交量", r.get("volume"))),
+                "amount": _float(r.get("成交额", r.get("amount"))),
+            }
+        )
+
+    if not rows:
+        return {"bars_count": 0, "minute_bars_1d": []}
+
+    latest_date = max(str(x.get("time"))[:10] for x in rows)
+    one_day = [x for x in rows if str(x.get("time"))[:10] == latest_date and x.get("close", 0) > 0]
+    one_day = one_day[-300:] if len(one_day) > 300 else one_day
+    return {
+        "latest_trade_date": latest_date,
+        "bars_count": len(one_day),
+        "minute_bars_1d": one_day,
+    }
+
+
+def _intraday_micro_features(intraday_doc: dict, prev_close: float) -> dict:
+    bars = (intraday_doc or {}).get("minute_bars_1d") or []
+    if not bars:
+        return {
+            "bars_count": 0,
+            "micro_available": False,
+            "open_auction_ret_pct": 0.0,
+            "open_15m_ret_pct": 0.0,
+            "tail_30m_ret_pct": 0.0,
+            "open_auction_volume_ratio": 0.0,
+            "close_auction_volume_ratio": 0.0,
+            "close_auction_jump_pct": 0.0,
+            "open_to_close_ret_pct": 0.0,
+            "intraday_amplitude_pct": 0.0,
+        }
+
+    opens = [_float(x.get("open")) for x in bars]
+    closes = [_float(x.get("close")) for x in bars]
+    highs = [_float(x.get("high")) for x in bars]
+    lows = [_float(x.get("low")) for x in bars]
+    vols = [_float(x.get("volume")) for x in bars]
+    if not closes or closes[0] <= 0 or closes[-1] <= 0:
+        return {
+            "bars_count": len(bars),
+            "micro_available": False,
+            "open_auction_ret_pct": 0.0,
+            "open_15m_ret_pct": 0.0,
+            "tail_30m_ret_pct": 0.0,
+            "open_auction_volume_ratio": 0.0,
+            "close_auction_volume_ratio": 0.0,
+            "close_auction_jump_pct": 0.0,
+            "open_to_close_ret_pct": 0.0,
+            "intraday_amplitude_pct": 0.0,
+        }
+
+    day_open = opens[0] if opens[0] > 0 else closes[0]
+    day_close = closes[-1]
+    open_auction_ret = (day_open / prev_close - 1) * 100.0 if prev_close > 0 else 0.0
+    idx_15 = min(len(closes) - 1, 14)
+    open_15m_ret = (closes[idx_15] / day_open - 1) * 100.0 if day_open > 0 else 0.0
+    tail_anchor = max(0, len(closes) - 31)
+    tail_30m_ret = (day_close / closes[tail_anchor] - 1) * 100.0 if closes[tail_anchor] > 0 else 0.0
+    open_to_close_ret = (day_close / day_open - 1) * 100.0 if day_open > 0 else 0.0
+    low_ref = min(v for v in lows if v > 0) if any(v > 0 for v in lows) else 0.0
+    high_ref = max(highs) if highs else 0.0
+    intraday_amp = (high_ref / low_ref - 1) * 100.0 if low_ref > 0 else 0.0
+
+    positive_vols = [v for v in vols if v > 0]
+    avg_vol = mean(positive_vols) if positive_vols else 0.0
+    open_ratio = (mean(vols[:5]) / avg_vol) if avg_vol > 0 and len(vols) >= 5 else 0.0
+    close_ratio = (mean(vols[-5:]) / avg_vol) if avg_vol > 0 and len(vols) >= 5 else 0.0
+    close_jump = (closes[-1] / closes[-2] - 1) * 100.0 if len(closes) >= 2 and closes[-2] > 0 else 0.0
+
+    return {
+        "bars_count": len(bars),
+        "micro_available": len(bars) >= 45,
+        "open_auction_ret_pct": round(open_auction_ret, 3),
+        "open_15m_ret_pct": round(open_15m_ret, 3),
+        "tail_30m_ret_pct": round(tail_30m_ret, 3),
+        "open_auction_volume_ratio": round(open_ratio, 3),
+        "close_auction_volume_ratio": round(close_ratio, 3),
+        "close_auction_jump_pct": round(close_jump, 3),
+        "open_to_close_ret_pct": round(open_to_close_ret, 3),
+        "intraday_amplitude_pct": round(intraday_amp, 3),
+    }
+
+
+CNY_DATES = {
+    2019: "2019-02-05",
+    2020: "2020-01-25",
+    2021: "2021-02-12",
+    2022: "2022-02-01",
+    2023: "2023-01-22",
+    2024: "2024-02-10",
+    2025: "2025-01-29",
+    2026: "2026-02-17",
+    2027: "2027-02-06",
+    2028: "2028-01-26",
+    2029: "2029-02-13",
+    2030: "2030-02-03",
+}
+
+
+def _parse_date(s: str) -> datetime | None:
+    try:
+        return datetime.strptime((s or "")[:10], "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _seasonality_long_stats(klines: list[dict]) -> dict:
+    if len(klines) < 80:
+        return {
+            "sample_days": 0,
+            "weekday_mean_return_pct": {},
+            "weekday_win_rate_pct": {},
+            "thursday_mean_return_pct": 0.0,
+            "thursday_win_rate_pct": 50.0,
+            "month_start_mean_return_pct": 0.0,
+            "month_end_mean_return_pct": 0.0,
+            "month_start_win_rate_pct": 50.0,
+            "month_end_win_rate_pct": 50.0,
+            "spring_festival_window_mean_return_pct": 0.0,
+            "spring_festival_pre_window_mean_return_pct": 0.0,
+            "spring_festival_post_window_mean_return_pct": 0.0,
+            "spring_festival_samples": 0,
+        }
+
+    rows: list[tuple[datetime, float]] = []
+    for r in klines:
+        date_s = str(r.get("日期") or r.get("Date") or r.get("date") or "")
+        dt = _parse_date(date_s)
+        close = _float(r.get("收盘", r.get("Close")))
+        if dt is None or close <= 0:
+            continue
+        rows.append((dt, close))
+    if len(rows) < 80:
+        return {
+            "sample_days": 0,
+            "weekday_mean_return_pct": {},
+            "weekday_win_rate_pct": {},
+            "thursday_mean_return_pct": 0.0,
+            "thursday_win_rate_pct": 50.0,
+            "month_start_mean_return_pct": 0.0,
+            "month_end_mean_return_pct": 0.0,
+            "month_start_win_rate_pct": 50.0,
+            "month_end_win_rate_pct": 50.0,
+            "spring_festival_window_mean_return_pct": 0.0,
+            "spring_festival_pre_window_mean_return_pct": 0.0,
+            "spring_festival_post_window_mean_return_pct": 0.0,
+            "spring_festival_samples": 0,
+        }
+
+    weekday_map = {i: [] for i in range(5)}
+    month_start: list[float] = []
+    month_end: list[float] = []
+    thursday: list[float] = []
+    spring_window: list[float] = []
+    spring_pre: list[float] = []
+    spring_post: list[float] = []
+    total_rets: list[float] = []
+    for i in range(1, len(rows)):
+        dt, c = rows[i]
+        _, p = rows[i - 1]
+        if p <= 0:
+            continue
+        ret = (c / p - 1.0) * 100.0
+        total_rets.append(ret)
+        wd = dt.weekday()
+        if wd <= 4:
+            weekday_map[wd].append(ret)
+            if wd == 3:
+                thursday.append(ret)
+        if dt.day <= 5:
+            month_start.append(ret)
+        if dt.day >= 25:
+            month_end.append(ret)
+
+        cny = _parse_date(CNY_DATES.get(dt.year, ""))
+        if cny is not None:
+            delta = (dt.date() - cny.date()).days
+            if -7 <= delta <= 10:
+                spring_window.append(ret)
+                if delta < 0:
+                    spring_pre.append(ret)
+                elif delta > 0:
+                    spring_post.append(ret)
+
+    def _m(vals: list[float]) -> float:
+        return round(mean(vals), 4) if vals else 0.0
+
+    def _w(vals: list[float]) -> float:
+        if not vals:
+            return 50.0
+        return round(sum(1 for x in vals if x > 0) / len(vals) * 100.0, 2)
+
+    wd_keys = ["mon", "tue", "wed", "thu", "fri"]
+    wd_mean = {k: _m(weekday_map[i]) for i, k in enumerate(wd_keys)}
+    wd_win = {k: _w(weekday_map[i]) for i, k in enumerate(wd_keys)}
+    return {
+        "sample_days": len(total_rets),
+        "weekday_mean_return_pct": wd_mean,
+        "weekday_win_rate_pct": wd_win,
+        "thursday_mean_return_pct": _m(thursday),
+        "thursday_win_rate_pct": _w(thursday),
+        "month_start_mean_return_pct": _m(month_start),
+        "month_end_mean_return_pct": _m(month_end),
+        "month_start_win_rate_pct": _w(month_start),
+        "month_end_win_rate_pct": _w(month_end),
+        "spring_festival_window_mean_return_pct": _m(spring_window),
+        "spring_festival_pre_window_mean_return_pct": _m(spring_pre),
+        "spring_festival_post_window_mean_return_pct": _m(spring_post),
+        "spring_festival_samples": len(spring_window),
+    }
+
+
 STAGE_LABEL = {0: "—", 1: "Stage 1 底部", 2: "Stage 2 上升", 3: "Stage 3 顶部", 4: "Stage 4 下跌"}
 
 
@@ -228,6 +477,10 @@ def main(ticker: str) -> dict:
     klines = ds.fetch_kline(ti)
     indicators = compute_indicators(klines)
     chips = fetch_chip_distribution(ti)
+    intraday = fetch_intraday_minutes(ti)
+    prev_close = _float((klines[-2] or {}).get("收盘")) if len(klines) >= 2 else 0.0
+    intraday_micro = _intraday_micro_features(intraday, prev_close)
+    seasonality = _seasonality_long_stats(klines[-520:] if len(klines) > 520 else klines)
     viz_shape = _extract_for_viz(klines)
 
     # Derive stage / ma_align / macd / rsi human labels from indicators
@@ -250,9 +503,12 @@ def main(ticker: str) -> dict:
             "macd": macd_label,
             "rsi": rsi_label,
             "chip_distribution": chips,
+            "intraday_minutes": intraday,
+            "intraday_micro": intraday_micro,
+            "seasonality_1y": seasonality,
             **viz_shape,
         },
-        "source": "akshare:stock_zh_a_hist + stock_cyq_em (+ 6 path fallback chain)",
+        "source": "akshare:stock_zh_a_hist + stock_zh_a_hist_min_em + stock_cyq_em (+ 6 path fallback chain)",
         "fallback": False,
     }
 

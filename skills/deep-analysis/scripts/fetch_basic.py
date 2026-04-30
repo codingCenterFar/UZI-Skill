@@ -54,8 +54,27 @@ def main(user_input: str) -> dict:
     else:
         ti = parse_ticker(user_input)
 
-    # v2.9.2 · 早期拦截 ETF/LOF/可转债（插件是个股分析引擎，跑非个股标的会输出垃圾）
+    # T320 · ETF/LOF 不再 early-return，改走策略篮子路径（仍保留可转债拦截）。
     sec_type = classify_security_type(ti.code) if ti.market == "A" else "stock"
+    if sec_type in ("etf", "lof"):
+        g = _NON_STOCK_GUIDANCE[sec_type]
+        data = ds.fetch_basic(ti)
+        if not isinstance(data, dict):
+            data = {}
+        data.setdefault("security_type", sec_type)
+        data.setdefault("is_basket_security", True)
+        data.setdefault("industry", "ETF/LOF篮子")
+        data.setdefault("name", ti.full)
+        return {
+            "ticker": ti.full,
+            "market": ti.market,
+            "data": data,
+            "security_type": sec_type,
+            "strategy_mode": "basket",
+            "source": "market_router + data_sources.fetch_basic",
+            "fallback": not bool(data),
+        }
+
     if sec_type in _NON_STOCK_GUIDANCE:
         g = _NON_STOCK_GUIDANCE[sec_type]
         return {

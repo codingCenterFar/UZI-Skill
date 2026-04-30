@@ -324,6 +324,210 @@ from lib.report.special_cards import (  # noqa: E402, F401
 
 
 
+_STRATEGY_ID_CN = {
+    "trend_momentum": "趋势/动量",
+    "reversal_mean_revert": "反转/均值回复",
+    "flow_turnover_behavior": "成交量/换手/资金行为",
+    "low_vol_risk_management": "低波/风险管理",
+    "value_repair": "价值/估值修复",
+    "quality_improvement": "质量/基本面改善",
+    "event_drift": "事件驱动",
+    "limit_up_ecology": "涨停/连板生态",
+    "intraday_timing": "日内/竞价/尾盘",
+    "calendar_seasonality": "日历/季节效应",
+    "industry_style_rotation": "行业/风格/主题轮动",
+    "pair_relative_strength": "配对/中性",
+}
+
+_STRATEGY_ORDER = list(_STRATEGY_ID_CN.keys())
+_SIGNAL_CN = {"bullish": "看多", "bearish": "看空", "neutral": "中性", "skip": "跳过"}
+_HORIZON_CN = {"intraday": "日内", "swing": "波段", "position": "中线"}
+
+
+def _cn_strategy_id(sid: str) -> str:
+    return _STRATEGY_ID_CN.get(sid, sid or "—")
+
+
+def _cn_signal(signal: str) -> str:
+    return _SIGNAL_CN.get(signal, signal or "—")
+
+
+def _cn_horizon(horizon: str) -> str:
+    return _HORIZON_CN.get(horizon, horizon or "—")
+
+
+def render_short_trading_module(syn: dict, raw: dict) -> str:
+    """Render the tactical short-trading block when synthesis contains it."""
+    st = syn.get("short_trading") or ((syn.get("friendly") or {}).get("short_trading") or {})
+    if not isinstance(st, dict) or not st:
+        return '<div style="padding:14px 16px;border:1px dashed var(--border);border-radius:8px;color:var(--text-dim);font-size:12px">暂无短线模块数据（可先跑 stage2 重新合成）。</div>'
+
+    score = float(st.get("setup_score") or 0)
+    score_color = "var(--bull-green)" if score >= 70 else "var(--neon-gold)" if score >= 55 else "var(--bear-red)"
+    pos = st.get("position_plan") or {}
+    levels = st.get("levels") or {}
+    stats = st.get("quick_stats") or {}
+    summary = st.get("strategy_summary") or {}
+    board = st.get("signal_board") or []
+
+    def _rules(title: str, items: list[str], color: str) -> str:
+        rows = "".join(
+            f'<li style="line-height:1.5;margin:4px 0;color:var(--text-bright)">{_safe(it)}</li>'
+            for it in (items or ["—"])[:3]
+        )
+        return (
+            f'<div style="padding:10px 12px;border:1px solid var(--border);border-left:3px solid {color};'
+            f'border-radius:8px;background:var(--bg-card)">'
+            f'<div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">{title}</div>'
+            f'<ul style="margin:0;padding-left:16px">{rows}</ul></div>'
+        )
+
+    level_rows = []
+    for key, label in [
+        ("breakout_entry", "突破位"),
+        ("retest_entry", "回踩位"),
+        ("hard_stop", "硬止损"),
+        ("take_profit_1", "止盈一"),
+        ("take_profit_2", "止盈二"),
+    ]:
+        val = levels.get(key)
+        if isinstance(val, (int, float)) and val > 0:
+            level_rows.append(f'<div class="chip"><strong>{label}</strong> ¥{val:.2f}</div>')
+
+    stat_rows = []
+    for key, label in [
+        ("stage", "结构"),
+        ("ma_align", "均线"),
+        ("rsi", "RSI"),
+        ("main_fund_5d_net_yi", "主力5日(亿)"),
+        ("lhb_30d", "30日上榜"),
+        ("matched_youzi_count", "游资席位"),
+        ("sentiment_heat", "情绪热度"),
+        ("open_15m_ret_pct", "开盘15m%"),
+        ("tail_30m_ret_pct", "尾盘30m%"),
+    ]:
+        val = stats.get(key)
+        if val in (None, ""):
+            continue
+        txt = f"{val:+.2f}%" if isinstance(val, float) and key.endswith("_pct") else str(round(val, 2) if isinstance(val, float) else val)
+        stat_rows.append(f'<div class="chip"><strong>{label}</strong> {txt}</div>')
+
+    board_rows = []
+    for row in board[:4]:
+        sid = _safe(row.get("strategy_id"))
+        sig = _safe(row.get("signal"))
+        color = "var(--bull-green)" if sig == "bullish" else "var(--bear-red)" if sig == "bearish" else "var(--text-mid)"
+        board_rows.append(
+            f'<div style="padding:8px 10px;border:1px solid var(--border);border-left:3px solid {color};'
+            f'border-radius:6px;background:var(--bg-card);margin-bottom:6px">'
+            f'<div style="font-family:Fira Code;font-size:11px;color:var(--text-mid)">{_cn_strategy_id(sid)} ({sid}) · {_cn_signal(sig)} · 强度 {_safe(row.get("strength"))}</div>'
+            f'<div style="font-size:12px;color:var(--text-bright);line-height:1.45">{_safe(row.get("explain"))}</div>'
+            f'</div>'
+        )
+
+    return f'''<div style="margin:8px 0 24px;padding:16px 18px;background:linear-gradient(135deg, rgba(217,119,6,.12), rgba(217,119,6,.04));border:1px solid rgba(217,119,6,.35);border-left:4px solid var(--neon-gold);border-radius:8px;">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+    <span style="font-size:20px">⚡</span>
+    <span style="font-family:Space Grotesk;font-weight:700;letter-spacing:.08em;color:var(--text-bright)">短线快进快出模块</span>
+    <span class="chip"><strong>模式</strong> {_safe(st.get("mode"))}</span>
+    <span class="chip"><strong>持有周期</strong> {_safe(st.get("holding_window"))}</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px;margin-bottom:12px;">
+    <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+      <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">SHORT SETUP SCORE</div>
+      <div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:34px;font-family:Fira Code;color:{score_color};font-weight:800">{score:.1f}</div><div style="font-size:12px;color:var(--text-mid)">/ 100</div></div>
+      <div style="font-size:12px;color:var(--text-bright);margin-top:6px">节奏：<strong>{_safe(st.get("rhythm"))}</strong> · 偏向：<strong>{_safe(st.get("bias"))}</strong></div>
+      <div style="font-size:12px;color:var(--text-mid);margin-top:6px">策略计数：bull {summary.get("bullish_count", 0)} / bear {summary.get("bearish_count", 0)} / neutral {summary.get("neutral_count", 0)}</div>
+    </div>
+    <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+      <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">仓位与关键位</div>
+      <div style="font-size:12px;color:var(--text-bright);line-height:1.6">初始仓位 <strong>{_safe(pos.get("initial"))}</strong> · 上限 <strong>{_safe(pos.get("max"))}</strong></div>
+      <div style="font-size:12px;color:var(--text-mid);margin-top:4px">{_safe(pos.get("notes"))}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">{''.join(level_rows) if level_rows else '<div style="color:var(--text-dim);font-size:12px">关键价位缺失</div>'}</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">{''.join(stat_rows) if stat_rows else '<div style="color:var(--text-dim);font-size:12px">暂无盘中快照</div>'}</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+    {_rules("开盘前检查", st.get("pre_open_checks") or [], "var(--neon-cyan)")}
+    {_rules("入场规则", st.get("entry_rules") or [], "var(--bull-green)")}
+    {_rules("加仓规则", st.get("add_rules") or [], "var(--neon-gold)")}
+    {_rules("止盈规则", st.get("take_profit_rules") or [], "var(--bull-green)")}
+    {_rules("止损规则", st.get("stop_rules") or [], "var(--bear-red)")}
+    {_rules("禁做条件", st.get("avoid_rules") or [], "var(--bear-red)")}
+  </div>
+  <div style="margin-top:2px;padding-top:8px;border-top:1px dashed var(--border)">
+    <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">短线信号榜</div>
+    {''.join(board_rows) if board_rows else '<div style="color:var(--text-dim);font-size:12px">暂无短线信号榜单</div>'}
+  </div>
+</div>'''
+
+
+def _render_strategy_layer(syn: dict) -> str:
+    """Render strategy-engine summary without undoing the v3 report-module split."""
+    sl = syn.get("strategy_layer") or {}
+    if not isinstance(sl, dict) or sl.get("status") != "available":
+        return ""
+
+    summary = sl.get("summary") or {}
+    signals = sl.get("signals") or []
+    regime = sl.get("regime") or {}
+    meta = sl.get("meta") or {}
+    eff = sl.get("effectiveness") or {}
+
+    def _top_rows(items: list[dict], color: str, empty: str) -> str:
+        if not items:
+            return f'<div style="font-size:12px;color:var(--text-dim);padding:6px 0">{empty}</div>'
+        return "".join(
+            f'<div style="padding:8px 10px;border:1px solid var(--border);border-left:3px solid {color};border-radius:6px;background:var(--bg-tinted);margin-bottom:6px">'
+            f'<div style="font-family:Fira Code;font-size:11px;color:var(--text-mid)">{_cn_strategy_id(_safe(it.get("strategy_id")))} · 强度 {_safe(it.get("strength"))}</div>'
+            f'<div style="font-size:12px;color:var(--text-bright);line-height:1.45">{_safe(it.get("explain"))}</div>'
+            f'</div>'
+            for it in items[:3]
+        )
+
+    sig_map = {s.get("strategy_id"): s for s in signals if isinstance(s, dict) and s.get("strategy_id")}
+    rows = []
+    for sid in [s for s in _STRATEGY_ORDER if s in sig_map] + [s for s in sig_map if s not in _STRATEGY_ORDER]:
+        sig = sig_map.get(sid) or {}
+        signal = _safe(sig.get("signal"), "neutral")
+        color = "var(--bull-green)" if signal == "bullish" else "var(--bear-red)" if signal == "bearish" else "var(--text-mid)"
+        rows.append(
+            "<tr>"
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border)"><strong>{_cn_strategy_id(sid)}</strong><br><span style="font-family:Fira Code;color:var(--text-dim);font-size:11px">{sid}</span></td>'
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border);color:{color};font-weight:700">{_cn_signal(signal)}</td>'
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border)">{_safe(sig.get("strength"))}</td>'
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border)">{_safe(sig.get("confidence"))}</td>'
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border)">{_cn_horizon(_safe(sig.get("horizon")))}</td>'
+            f'<td style="padding:8px 10px;border-top:1px solid var(--border);line-height:1.45">{_safe(sig.get("explain"))}</td>'
+            "</tr>"
+        )
+
+    eff_note = ""
+    if isinstance(eff, dict) and eff.get("status") == "available":
+        eff_note = f' · 回测有效性 {len(eff.get("effective_top") or [])} effective / {len(eff.get("fragile_top") or [])} fragile'
+
+    return f'''<section class="data-section">
+  <div class="section-title"><span>STRATEGY LAYER</span><em>A 股策略雷达</em></div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+    <div class="data-cell"><div class="label">Bullish</div><div class="value">{summary.get("bullish_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">Bearish</div><div class="value">{summary.get("bearish_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">Neutral</div><div class="value">{summary.get("neutral_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">Regime</div><div class="value">{_safe(regime.get("label") or regime.get("name"))}</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+    <div>{_top_rows(summary.get("top_bullish") or [], "var(--bull-green)", "暂无看多策略触发")}</div>
+    <div>{_top_rows(summary.get("top_bearish") or [], "var(--bear-red)", "暂无看空策略触发")}</div>
+  </div>
+  <div style="overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="color:var(--text-mid);text-align:left"><th style="padding:8px 10px">策略</th><th style="padding:8px 10px">信号</th><th style="padding:8px 10px">强度</th><th style="padding:8px 10px">置信</th><th style="padding:8px 10px">周期</th><th style="padding:8px 10px">解释</th></tr></thead>
+      <tbody>{''.join(rows) or '<tr><td colspan="6" style="padding:10px;color:var(--text-dim)">暂无策略信号</td></tr>'}</tbody>
+    </table>
+  </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-top:8px">engine {_safe(meta.get("engine_version"))} · depth {_safe(meta.get("depth"))} · enabled {meta.get("enabled_strategy_count", 0)}{eff_note}</div>
+</section>'''
+
+
 # v3.2 · 490 行机构级建模渲染抽到 lib/report/institutional.py
 # assemble_report 仍 re-export 保持兼容
 from lib.report.institutional import (  # noqa: E402, F401
@@ -523,6 +727,10 @@ def assemble(ticker: str) -> Path:
         "<!-- INJECT_FRIENDLY_LAYER -->",
         render_friendly_layer(syn, raw),
     )
+    template = template.replace(
+        "<!-- INJECT_SHORT_TRADING_MODULE -->",
+        render_short_trading_module(syn, raw),
+    )
 
     # 基金经理抄作业面板
     fund_managers = (syn.get("fund_managers") or raw.get("fund_managers") or [])
@@ -569,6 +777,10 @@ def assemble(ticker: str) -> Path:
     template = template.replace(
         "<!-- INJECT_STYLE_CHIP -->",
         _render_style_chip(syn),
+    )
+    template = template.replace(
+        "<!-- INJECT_STRATEGY_LAYER -->",
+        _render_strategy_layer(syn),
     )
 
     date = datetime.now().strftime("%Y%m%d")

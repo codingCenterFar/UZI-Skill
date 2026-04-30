@@ -381,10 +381,257 @@ from lib.pipeline.score_fns import (  # noqa: E402, F401
     _auto_summarize_dim,
     _autofill_qualitative_via_mx,
     _extract_mx_text,
-    generate_synthesis,
+    generate_synthesis as _base_generate_synthesis,
     _is_junk_autofill,          # v2.12.1 junk filter（测试期望顶层属性）
     _AUTOFILL_JUNK_PATTERNS,    # v2.12.1
 )
+
+
+def _strategy_summary_from_signals(strategy_signals: dict | None) -> dict:
+    """Normalize strategy summary payload for panel/synthesis soft fusion."""
+    if not isinstance(strategy_signals, dict):
+        return {
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "neutral_count": 0,
+            "skip_count": 0,
+            "top_bullish": [],
+            "top_bearish": [],
+        }
+    ssum = strategy_signals.get("summary") or {}
+    return {
+        "bullish_count": int(ssum.get("bullish_count", 0) or 0),
+        "bearish_count": int(ssum.get("bearish_count", 0) or 0),
+        "neutral_count": int(ssum.get("neutral_count", 0) or 0),
+        "skip_count": int(ssum.get("skip_count", 0) or 0),
+        "top_bullish": list(ssum.get("top_bullish") or [])[:3],
+        "top_bearish": list(ssum.get("top_bearish") or [])[:3],
+    }
+
+
+def _apply_strategy_soft_fusion(panel: dict, strategy_signals: dict | None) -> dict:
+    """T205 · D/F/G 组优先读取策略摘要（软融合，不改 signal）。"""
+    if not isinstance(panel, dict):
+        return panel
+
+    ssum = _strategy_summary_from_signals(strategy_signals)
+    investors = panel.get("investors") or []
+    if not investors:
+        panel["strategy_soft_fusion"] = {
+            "enabled": False,
+            "reason": "empty_panel",
+            "strategy_summary": ssum,
+        }
+        return panel
+
+    focus_groups = {"D", "F", "G"}
+    bull_n = ssum.get("bullish_count", 0)
+    bear_n = ssum.get("bearish_count", 0)
+    top_bull = (ssum.get("top_bullish") or [{}])[0]
+    top_bear = (ssum.get("top_bearish") or [{}])[0]
+    applied = 0
+
+    for inv in investors:
+        if not isinstance(inv, dict) or inv.get("group") not in focus_groups or inv.get("signal") == "skip":
+            continue
+        sig = inv.get("signal")
+        hint = None
+        if sig == "bullish" and top_bull:
+            hint = top_bull
+        elif sig == "bearish" and top_bear:
+            hint = top_bear
+        elif bull_n > bear_n and top_bull:
+            hint = top_bull
+        elif bear_n > bull_n and top_bear:
+            hint = top_bear
+        if not hint:
+            continue
+
+        sid = str(hint.get("strategy_id") or "strategy")
+        strength = _f(hint.get("strength"), 0)
+        explain = str(hint.get("explain") or "").strip()
+        strategy_line = f"策略层提示：{sid}({strength:.1f}) · {explain}" if explain else f"策略层提示：{sid}({strength:.1f})"
+
+        headline = str(inv.get("headline") or "")
+        if strategy_line not in headline:
+            inv["headline"] = (headline + " | " + strategy_line).strip(" |")
+
+        reasoning = str(inv.get("reasoning") or "")
+        if strategy_line not in reasoning:
+            inv["reasoning"] = (reasoning + " " + strategy_line).strip()
+
+        conf = int(_f(inv.get("confidence"), 0))
+        if sig == "bullish":
+            conf += 4 if bull_n >= bear_n else -2
+        elif sig == "bearish":
+            conf += 4 if bear_n >= bull_n else -2
+        elif sig == "neutral":
+            conf += 2 if abs(bull_n - bear_n) <= 1 else -1
+        inv["confidence"] = max(0, min(100, conf))
+        applied += 1
+
+    panel["strategy_soft_fusion"] = {
+        "enabled": True,
+        "focus_groups": ["D", "F", "G"],
+        "applied_investor_count": applied,
+        "strategy_summary": ssum,
+        "note": "soft-fusion only: keeps original signal, augments rationale/confidence for D/F/G.",
+    }
+    return panel
+
+
+def _build_basket_strategy_panel(
+    ticker: str,
+    security_type: str,
+    strategy_signals: dict | None,
+) -> dict:
+    """T320 · ETF/LOF 直跑：用策略篮子 panel 替代 51 个股评委。"""
+    ssum = _strategy_summary_from_signals(strategy_signals)
+    signals = (strategy_signals or {}).get("signals") or []
+    investors_out = []
+    for idx, sig in enumerate([s for s in signals if isinstance(s, dict)][:12], start=1):
+        signal = sig.get("signal") if sig.get("signal") in {"bullish", "bearish", "neutral", "skip"} else "neutral"
+        strength = _f(sig.get("strength"), 50)
+        score = int(max(1, min(100, strength if signal != "bearish" else 100 - strength)))
+        sid = str(sig.get("strategy_id") or f"strategy_{idx}")
+        title = str(sig.get("title") or sid)
+        investors_out.append({
+            "investor_id": sid,
+            "name": title,
+            "group": "G",
+            "signal": signal,
+            "score": score,
+            "confidence": int(_f(sig.get("confidence"), 50)),
+            "headline": f"{title}: {signal} {strength:.1f}",
+            "reasoning": str(sig.get("explain") or "策略篮子信号。"),
+            "verdict": {"bullish": "关注", "bearish": "回避", "neutral": "观望", "skip": "跳过"}.get(signal, "观望"),
+        })
+    if not investors_out:
+        investors_out.append({
+            "investor_id": "basket_neutral",
+            "name": "策略篮子",
+            "group": "G",
+            "signal": "neutral",
+            "score": 50,
+            "confidence": 40,
+            "headline": "策略信号不可用，保持中性。",
+            "reasoning": "ETF/LOF basket 模式下策略引擎失败时降级为中性 panel。",
+            "verdict": "观望",
+        })
+
+    sig_dist = {k: sum(1 for inv in investors_out if inv.get("signal") == k) for k in ("bullish", "bearish", "neutral", "skip")}
+    vote_dist = {
+        "strongly_buy": 0,
+        "buy": sig_dist["bullish"],
+        "watch": sig_dist["neutral"],
+        "wait": 0,
+        "avoid": sig_dist["bearish"],
+    }
+    active_count = max(1, len(investors_out) - sig_dist.get("skip", 0))
+    consensus = (sig_dist["bullish"] + 0.6 * sig_dist["neutral"]) / active_count * 100
+    return {
+        "ticker": ticker,
+        "panel_mode": "basket_strategy",
+        "panel_scope_label": "策略篮子评审",
+        "security_type": security_type,
+        "panel_consensus": round(consensus, 1),
+        "vote_distribution": vote_dist,
+        "signal_distribution": sig_dist,
+        "investors": investors_out,
+        "consensus_formula": {
+            "version": "v2.16 · basket strategy panel",
+            "neutral_weight": 0.6,
+            "active": active_count,
+        },
+        "strategy_soft_fusion": {
+            "enabled": True,
+            "focus_groups": ["basket"],
+            "applied_investor_count": len(investors_out),
+            "strategy_summary": ssum,
+            "note": "ETF/LOF 路径：直接使用策略篮子面板，跳过 51 评委。",
+        },
+    }
+
+
+def _load_strategy_trade_effectiveness(depth: str) -> dict:
+    """Load strategy_backtest summary for stage2/report fusion (non-blocking)."""
+    candidates = [
+        Path(".cache/_global") / f"strategy_backtest_{depth}.json",
+        HERE / ".cache" / "_global" / f"strategy_backtest_{depth}.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            rep = json.loads(path.read_text(encoding="utf-8"))
+            eff = (rep.get("strategy_effectiveness") or {}) if isinstance(rep, dict) else {}
+            return {
+                "status": "available",
+                "source": str(path),
+                "processed_tickers": rep.get("processed_tickers", 0),
+                "effective_top": (eff.get("effective") or [])[:5],
+                "fragile_top": (eff.get("fragile") or [])[:5],
+                "note": eff.get("note") or "A-share constrained strategy backtest summary.",
+            }
+        except Exception:
+            continue
+    return {
+        "status": "unavailable",
+        "source": "",
+        "processed_tickers": 0,
+        "effective_top": [],
+        "fragile_top": [],
+        "note": "strategy_backtest report not found; run strategy_backtest.py to enable effectiveness summary.",
+    }
+
+
+def generate_synthesis(
+    raw: dict,
+    dims_scored: dict,
+    panel: dict,
+    agent_analysis: dict | None = None,
+    strategy_signals: dict | None = None,
+) -> dict:
+    """v3 wrapper around pipeline.generate_synthesis, adding local strategy/papertrade outputs."""
+    syn = _base_generate_synthesis(raw, dims_scored, panel, agent_analysis=agent_analysis)
+    strategy_soft = panel.get("strategy_soft_fusion") or {}
+    strategy_summary = strategy_soft.get("strategy_summary") or _strategy_summary_from_signals(strategy_signals)
+    strategy_bull = int(strategy_summary.get("bullish_count", 0) or 0)
+    strategy_bear = int(strategy_summary.get("bearish_count", 0) or 0)
+    strategy_net_bias = strategy_bull - strategy_bear
+
+    from compute_friendly import compute_exit_triggers, compute_short_trading_module
+
+    exit_triggers = compute_exit_triggers(raw, dims_scored, {}, strategy_summary=strategy_summary)
+    short_trading = compute_short_trading_module(
+        raw,
+        dims_scored,
+        {},
+        strategy_signals=strategy_signals if isinstance(strategy_signals, dict) else None,
+        strategy_summary=strategy_summary,
+    )
+
+    friendly = syn.setdefault("friendly", {})
+    friendly["exit_triggers"] = exit_triggers
+    friendly["short_trading"] = short_trading
+    syn.update({"short_trading": short_trading})
+
+    price = ((raw.get("dimensions", {}).get("0_basic") or {}).get("data") or {}).get("price") or 0
+    default_buy_zones = syn.get("buy_zones") or {}
+    if price:
+        bias_note = f"（策略层 bull {strategy_bull} / bear {strategy_bear}）"
+        if strategy_net_bias >= 2:
+            default_buy_zones.update({
+                "technical": {"price": round(price * 0.97, 2), "rationale": f"技术层偏多，优先等缩量回踩 {bias_note}"},
+                "youzi": {"price": round(price * 1.00, 2), "rationale": f"短线情绪共振可小仓跟随 {bias_note}"},
+            })
+        elif strategy_net_bias <= -2:
+            default_buy_zones.update({
+                "technical": {"price": round(price * 0.91, 2), "rationale": f"先等转强信号再入场 {bias_note}"},
+                "youzi": {"price": round(price * 0.97, 2), "rationale": f"仅情绪回暖时快进快出 {bias_note}"},
+            })
+        syn["buy_zones"] = default_buy_zones
+    return syn
 
 
 def _detect_lite_mode() -> tuple[bool, str]:
@@ -433,8 +680,17 @@ def stage1(ticker: str) -> dict:
     from lib.pipeline.preflight_helpers import prepare_target
     _pt = prepare_target(ticker, detect_lite_fn=_detect_lite_mode)
     if not _pt["ok"]:
-        return _pt["payload"]  # name_not_resolved / non_stock_security early-exit
-    ti = _pt["ticker_info"]
+        payload = _pt["payload"]
+        sec_type = payload.get("security_type") if isinstance(payload, dict) else None
+        if sec_type in ("etf", "lof"):
+            print(f"  🧺 {payload.get('ticker', ticker)} 是 {sec_type.upper()}，切换到 basket_mode 策略篮子路径。")
+            ti = parse_ticker(payload.get("ticker") or ticker)
+            basket_mode = {"enabled": True, "security_type": sec_type}
+        else:
+            return payload  # name_not_resolved / non_stock_security early-exit
+    else:
+        ti = _pt["ticker_info"]
+        basket_mode = {"enabled": False, "security_type": "stock"}
 
     print("📊 Task 1 · 数据采集")
     raw = collect_raw_data(ti.full)
@@ -524,30 +780,111 @@ def stage1(ticker: str) -> dict:
     write_task_output(ti.full, "dimensions", dims)
     print(f"  基本面得分: {dims['fundamental_score']}/100")
 
-    print("\n🎭 Task 3 · 51 评委规则引擎（骨架分）")
-    panel = generate_panel(dims, raw)
-    write_task_output(ti.full, "panel", panel)
-    sd = panel["signal_distribution"]
-    skip_n = sd.get("skip", 0)
-    active_n = len(panel["investors"]) - skip_n
-    print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
+    panel: dict = {}
+    if basket_mode.get("enabled"):
+        print("\n🧺 Task 3 · ETF/LOF 策略篮子评审（跳过 51 评委）")
+        print("  先生成策略信号，再组装 basket panel。")
+    else:
+        print("\n🎭 Task 3 · 51 评委规则引擎（骨架分）")
+        panel = generate_panel(dims, raw)
+        write_task_output(ti.full, "panel", panel)
+        sd = panel["signal_distribution"]
+        skip_n = sd.get("skip", 0)
+        active_n = len(panel["investors"]) - skip_n
+        print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
 
     features = extract_features(raw, raw.get("dimensions", {}))
+
+    print("\n🧩 Task 3.5 · Strategy Engine（phase0）")
+    strategy_features = None
+    strategy_signals = None
+    strategy_meta = None
+    try:
+        try:
+            from lib.analysis_profile import get_profile as _get_profile
+            depth = _get_profile().depth
+        except Exception:
+            depth = os.environ.get("UZI_DEPTH", "medium")
+
+        from lib.strategy_engine import build_strategy_outputs
+
+        strategy_features, strategy_signals, strategy_meta = build_strategy_outputs(
+            ti.full, raw, dims, depth
+        )
+        write_task_output(ti.full, "strategy_features", strategy_features)
+        write_task_output(ti.full, "strategy_signals", strategy_signals)
+        write_task_output(ti.full, "strategy_meta", strategy_meta)
+
+        if basket_mode.get("enabled"):
+            panel = _build_basket_strategy_panel(
+                ti.full,
+                basket_mode.get("security_type") or "etf",
+                strategy_signals,
+            )
+            write_task_output(ti.full, "panel", panel)
+            sd = panel.get("signal_distribution") or {}
+            print(
+                "  策略篮子评审: "
+                f"{len(panel.get('investors') or [])} 视角 · "
+                f"看多 {sd.get('bullish', 0)} · 中性 {sd.get('neutral', 0)} · 看空 {sd.get('bearish', 0)}"
+            )
+        else:
+            panel = _apply_strategy_soft_fusion(panel, strategy_signals)
+            write_task_output(ti.full, "panel", panel)
+
+        ssum = strategy_signals.get("summary") or {}
+        print(
+            "  策略信号: "
+            f"{len(strategy_signals.get('signals') or [])} 条 · "
+            f"看多 {ssum.get('bullish_count', 0)} · "
+            f"看空 {ssum.get('bearish_count', 0)} · "
+            f"中性 {ssum.get('neutral_count', 0)} · "
+            f"skip {ssum.get('skip_count', 0)}"
+        )
+        sfuse = panel.get("strategy_soft_fusion") or {}
+        if basket_mode.get("enabled"):
+            print(
+                "  Basket 模式: "
+                f"策略摘要已注入 panel · "
+                f"bull {ssum.get('bullish_count', 0)} / bear {ssum.get('bearish_count', 0)}"
+            )
+        else:
+            print(
+                "  评委软融合: "
+                f"D/F/G 已注入 {sfuse.get('applied_investor_count', 0)} 人 · "
+                f"bull {ssum.get('bullish_count', 0)} / bear {ssum.get('bearish_count', 0)}"
+            )
+    except Exception as _se:
+        print(f"  ⚠️ Strategy Engine 接入失败（降级继续）: {type(_se).__name__}: {str(_se)[:120]}")
+        if basket_mode.get("enabled"):
+            panel = _build_basket_strategy_panel(
+                ti.full,
+                basket_mode.get("security_type") or "etf",
+                strategy_signals,
+            )
+            write_task_output(ti.full, "panel", panel)
+            print("  Basket 模式降级：策略信号失败，已回退到中性 basket panel。")
 
     print(f"\n{'━' * 50}")
     print(f"📋 Stage 1 完成 · 骨架分已生成")
     print(f"   数据: .cache/{ti.full}/raw_data.json")
     print(f"   评分: .cache/{ti.full}/dimensions.json")
     print(f"   评委: .cache/{ti.full}/panel.json")
+    print(f"   策略: .cache/{ti.full}/strategy_signals.json")
     print(f"")
-    print(f"   ⏸️  此时 Claude agent 应介入：")
-    print(f"      1. 读取 panel.json 中 51 人的骨架分")
-    print(f"      2. Spawn 4 个 sub-agent 分组 role-play 投资者")
-    print(f"      3. 用 agent 判断覆盖 panel.json 中的 headline/reasoning/score")
-    print(f"      4. 写 agent_analysis.json 到 .cache/{ti.full}/")
-    print(f"         包含: dim_commentary, panel_insights, great_divide_override, narrative_override")
-    print(f"         设置 agent_reviewed: true")
-    print(f"      5. 然后调用 stage2('{ti.full}') 生成最终报告")
+    if basket_mode.get("enabled"):
+        print(f"   🧺 ETF/LOF 模式：已跳过 51 评委，panel 由策略篮子生成。")
+        print(f"      agent 可直接补充 agent_analysis.json（panel_insights / narrative_override）。")
+        print(f"      然后调用 stage2('{ti.full}') 生成最终报告。")
+    else:
+        print(f"   ⏸️  此时 Claude agent 应介入：")
+        print(f"      1. 读取 panel.json 中 51 人的骨架分")
+        print(f"      2. Spawn 4 个 sub-agent 分组 role-play 投资者")
+        print(f"      3. 用 agent 判断覆盖 panel.json 中的 headline/reasoning/score")
+        print(f"      4. 写 agent_analysis.json 到 .cache/{ti.full}/")
+        print(f"         包含: dim_commentary, panel_insights, great_divide_override, narrative_override")
+        print(f"         设置 agent_reviewed: true")
+        print(f"      5. 然后调用 stage2('{ti.full}') 生成最终报告")
     print(f"{'━' * 50}")
 
     return {
@@ -556,6 +893,10 @@ def stage1(ticker: str) -> dict:
         "dims": dims,
         "panel": panel,
         "features": features,
+        "strategy_features": strategy_features,
+        "strategy_signals": strategy_signals,
+        "strategy_meta": strategy_meta,
+        "basket_mode": basket_mode,
     }
 
 
@@ -573,6 +914,21 @@ def stage2(ticker: str) -> str:
     raw = read_task_output(ti.full, "raw_data")
     dims = read_task_output(ti.full, "dimensions")
     panel = read_task_output(ti.full, "panel")
+    strategy_features = read_task_output(ti.full, "strategy_features")
+    strategy_signals = read_task_output(ti.full, "strategy_signals")
+    strategy_meta = read_task_output(ti.full, "strategy_meta")
+
+    # T205 · 老 cache 兜底：若 panel 尚未融合策略摘要，stage2 侧补一次（不阻断）
+    if isinstance(panel, dict) and isinstance(strategy_signals, dict):
+        try:
+            if (
+                panel.get("panel_mode") != "basket_strategy"
+                and not (panel.get("strategy_soft_fusion") or {}).get("enabled")
+            ):
+                panel = _apply_strategy_soft_fusion(panel, strategy_signals)
+                write_task_output(ti.full, "panel", panel)
+        except Exception as _pf:
+            print(f"  ⚠️ panel 策略软融合补齐失败（忽略）: {_pf}")
 
     if not (raw and dims and panel):
         raise RuntimeError(f"Stage 2 缺少数据，请先跑 stage1('{ticker}')")
@@ -635,7 +991,57 @@ def stage2(ticker: str) -> str:
         agent_analysis = None
 
     print(f"\n⚖ Task 4 · 综合研判")
-    syn = generate_synthesis(raw, dims, panel, agent_analysis=agent_analysis)
+    syn = generate_synthesis(
+        raw,
+        dims,
+        panel,
+        agent_analysis=agent_analysis,
+        strategy_signals=strategy_signals if isinstance(strategy_signals, dict) else None,
+    )
+
+    # Phase 0 · strategy layer merge (non-blocking)
+    if isinstance(strategy_signals, dict) and isinstance(strategy_meta, dict):
+        ssum = strategy_signals.get("summary") or {}
+        depth = strategy_meta.get("depth") or os.environ.get("UZI_DEPTH", "medium")
+        effectiveness = _load_strategy_trade_effectiveness(str(depth))
+        syn["strategy_layer"] = {
+            "status": "available",
+            "meta": {
+                "engine_version": strategy_meta.get("engine_version", "unknown"),
+                "schema_version": strategy_meta.get("schema_version", "unknown"),
+                "depth": strategy_meta.get("depth"),
+                "enabled_strategy_count": strategy_meta.get("enabled_strategy_count", 0),
+                "schema_valid": bool(strategy_meta.get("schema_valid", False)),
+            },
+            "summary": ssum,
+            "signals": strategy_signals.get("signals") or [],
+            "regime": (strategy_features or {}).get("regime") if isinstance(strategy_features, dict) else {},
+            "effectiveness": effectiveness,
+        }
+        print(
+            "  strategy_layer: "
+            f"{len(syn['strategy_layer']['signals'])} 条 · "
+            f"看多 {ssum.get('bullish_count', 0)} · "
+            f"看空 {ssum.get('bearish_count', 0)}"
+        )
+        if effectiveness.get("status") == "available":
+            print(
+                "  strategy_effectiveness: "
+                f"有效 {len(effectiveness.get('effective_top') or [])} · "
+                f"脆弱 {len(effectiveness.get('fragile_top') or [])} · "
+                f"样本 {effectiveness.get('processed_tickers', 0)}"
+            )
+        else:
+            print("  strategy_effectiveness: unavailable（可运行 strategy_backtest.py 补齐）")
+    else:
+        syn["strategy_layer"] = {
+            "status": "unavailable",
+            "reason": "strategy_signals.json not found or invalid",
+            "signals": [],
+            "summary": {"bullish_count": 0, "bearish_count": 0, "neutral_count": 0, "skip_count": 0},
+            "regime": {},
+        }
+        print("  strategy_layer: unavailable（降级，不阻断报告）")
 
     # v2.3 · 合并 _data_gaps.json 进 synthesis，让报告组装环节能渲染橙色徽章/banner。
     # agent 若在 agent_analysis.json 里显式 ack 了某个 gap，标 resolved=false + note；

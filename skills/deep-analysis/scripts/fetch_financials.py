@@ -91,6 +91,18 @@ def _fetch_a_share(ti) -> dict:
                     break
 
             last = df_ind.iloc[-1]
+
+            def _latest_metric(candidates: list[str]) -> float:
+                for col in candidates:
+                    if col in df_ind.columns:
+                        return _to_float(last.get(col))
+                # Fallback: some providers append units or aliases to the same metric.
+                for col in df_ind.columns:
+                    col_s = str(col)
+                    if any(c in col_s for c in candidates):
+                        return _to_float(last.get(col))
+                return 0.0
+
             # Financial health
             health = {}
             for src_key, dst_key, unit_div in [
@@ -103,6 +115,18 @@ def _fetch_a_share(ti) -> dict:
                     v = _to_float(last.get(src_key))
                     if v:
                         health[dst_key] = v / unit_div
+            # T310: quality enhancers from financial indicator tables.
+            extra_metric_map = [
+                (["应收账款周转率(次)", "应收账款周转率", "应收周转率(次)", "应收周转率"], "receivable_turnover"),
+                (["存货周转率(次)", "存货周转率"], "inventory_turnover"),
+                (["总资产周转率(次)", "总资产周转率"], "asset_turnover"),
+                (["总资产增长率(%)", "总资产增长率"], "asset_growth"),
+                (["销售毛利率(%)", "毛利率(%)", "销售毛利率"], "gross_margin_pct"),
+            ]
+            for candidates, dst_key in extra_metric_map:
+                v = _latest_metric(candidates)
+                if abs(v) > 1e-9:
+                    health[dst_key] = v
             if health:
                 out["financial_health"] = health
 
@@ -111,6 +135,9 @@ def _fetch_a_share(ti) -> dict:
                 out["roe"] = f"{_to_float(last['加权净资产收益率(%)']):.1f}%"
             if "销售净利率(%)" in df_ind.columns:
                 out["net_margin"] = f"{_to_float(last['销售净利率(%)']):.1f}%"
+            gross_margin_val = _latest_metric(["销售毛利率(%)", "毛利率(%)", "销售毛利率"])
+            if abs(gross_margin_val) > 1e-9:
+                out["gross_margin"] = f"{gross_margin_val:.1f}%"
     except Exception as e:
         out["_indicator_error"] = str(e)
 
