@@ -151,6 +151,39 @@ def test_render_dashboard_html_contains_operator_workbench_sections():
 
     assert "<!doctype html>" in html
     assert "Pytest Papertrade Desk" in html
+    assert 'lang="zh-CN"' in html
+    assert "观察列表" in html
+    assert "持仓" in html
+    assert "订单" in html
+    assert "事件" in html
+    assert "运行时" in html
+    assert "候选池" in html
+    assert "等回踩" in html
+    assert "等待回踩" in html
+    assert "行情失败" in html
+    assert "PULLBACK_WAIT" not in html
+    assert "wait_pullback" not in html
+    assert "quote_failed" not in html
+    assert "600519.SH" in html
+    assert "dashboard-buy-001" not in html
+    assert "dashboard-buy" not in html
+
+
+def test_render_dashboard_html_supports_english_language_option():
+    conn = _conn()
+    cfg = load_config()
+    init_db(conn, initial_cash=cfg.trade.initial_cash)
+    _seed_position(conn)
+    _seed_candidate_view(conn)
+
+    html = render_dashboard_html(
+        conn,
+        title="Pytest Papertrade Desk",
+        generated_at="2026-04-25T15:00:00",
+        lang="en",
+    )
+
+    assert 'lang="en"' in html
     assert "Watchlist" in html
     assert "Positions" in html
     assert "Orders" in html
@@ -160,9 +193,6 @@ def test_render_dashboard_html_contains_operator_workbench_sections():
     assert "PULLBACK_WAIT" in html
     assert "wait_pullback" in html
     assert "quote_failed" in html
-    assert "600519.SH" in html
-    assert "dashboard-buy-001" not in html
-    assert "dashboard-buy" not in html
 
 
 def test_render_dashboard_html_supports_auto_refresh_marker():
@@ -180,7 +210,7 @@ def test_render_dashboard_html_supports_auto_refresh_marker():
     )
 
     assert 'http-equiv="refresh" content="7"' in html
-    assert "auto refresh 7s" in html
+    assert "自动刷新 7s" in html
 
 
 def test_write_dashboard_html_writes_static_file(tmp_path: Path):
@@ -195,6 +225,7 @@ def test_write_dashboard_html_writes_static_file(tmp_path: Path):
     assert output.exists()
     content = output.read_text(encoding="utf-8")
     assert "Desk Export" in content
+    assert "候选池" in content
     assert "600519.SH" in content
 
 

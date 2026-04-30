@@ -1270,7 +1270,7 @@ def _strategy_trend_momentum(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 3 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 62 + bull_hits * 3, 60, "swing", 76,
-            "Momentum stack is bullish: residual/corrected/overnight trend plus ADX/Donchian confirmation.",
+            "动量组合偏多：残差/修正/隔夜趋势与 ADX、唐奇安突破形成共振。",
             {
                 "stage_num": stage,
                 "rsi": rsi,
@@ -1296,7 +1296,7 @@ def _strategy_trend_momentum(features: dict, regime: dict, ctx: dict) -> dict:
     if bear_hits >= 3 and bear_hits > bull_hits:
         return _mk_signal(
             "bearish", 62 + bear_hits * 3, 59, "swing", 75,
-            "Momentum stack is bearish: residual/corrected/overnight trend and ADX/Donchian downside alignment.",
+            "动量组合偏空：残差/修正/隔夜趋势与 ADX、唐奇安下行确认一致。",
             {
                 "stage_num": stage,
                 "rsi": rsi,
@@ -1321,7 +1321,7 @@ def _strategy_trend_momentum(features: dict, regime: dict, ctx: dict) -> dict:
         )
     return _mk_signal(
         "neutral", 50, 44, "swing", 60,
-        "Trend/momentum stack is mixed; ADX and Donchian have not confirmed a clean direction.",
+        "趋势/动量信号分歧，ADX 与唐奇安尚未确认清晰方向。",
         {
             "stage_num": stage,
             "rsi": rsi,
@@ -1415,18 +1415,18 @@ def _strategy_reversal(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 3 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 58 + bull_hits * 4, 57, "swing", 72,
-            "Mean-reversion setup is active (BOLL/KDJ/CCI + short-horizon oversold extension).",
+            "均值回归机会出现：BOLL/KDJ/CCI 与短周期超跌扩张同时触发。",
             evidence,
         )
     if bear_hits >= 3 and bear_hits > bull_hits:
         return _mk_signal(
             "bearish", 58 + bear_hits * 4, 56, "swing", 71,
-            "Mean-reversion pullback risk is elevated (overbought extension and weak gap-fill pattern).",
+            "回踩风险升高：短周期超买扩张且缺口回补结构偏弱。",
             evidence,
         )
     return _mk_signal(
         "neutral", 50, 44, "swing", 58,
-        "Reversal indicators are mixed; no decisive oversold/overbought edge.",
+        "反转指标分歧，暂无明确超跌/超买优势。",
         evidence,
     )
 
@@ -1505,18 +1505,18 @@ def _strategy_flow_turnover(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 4 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 58 + bull_hits * 4, 57, "swing", 72,
-            "Flow/turnover indicators are aligned (CMF/MFI/OBV/VPT proxies + liquidity regime).",
+            "量价/换手/资金行为共振：CMF/MFI/OBV/VPT 代理指标与流动性环境配合。",
             evidence,
         )
     if bear_hits >= 4 and bear_hits > bull_hits:
         return _mk_signal(
             "bearish", 58 + bear_hits * 4, 56, "swing", 71,
-            "Flow/turnover behavior suggests distribution and failed continuation (fake-board risk elevated).",
+            "量价/换手行为偏分配，延续失败风险升高（含炸板/假突破风险）。",
             evidence,
         )
     return _mk_signal(
         "neutral", 50, 44, "swing", 58,
-        "Flow/turnover proxies are mixed; no clear continuation vs distribution edge.",
+        "资金/换手代理指标分歧，暂无明确延续或出货优势。",
         evidence,
     )
 
@@ -1594,18 +1594,18 @@ def _strategy_low_vol(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 4 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 58 + min(20, bull_hits * 4), confidence, "position", regime_fit + 4,
-            "Risk metrics are constructive (ATR/IVOL controlled, vol-target leverage >= 1, risk budget supportive).",
+            "风险指标偏建设性：ATR/特异波动受控，波动率目标杠杆不低于 1，风险预算仍有支撑。",
             evidence,
         )
     if bear_hits >= 4 and bear_hits > bull_hits:
         return _mk_signal(
             "bearish", 58 + min(20, bear_hits * 4), confidence, "position", regime_fit,
-            "Risk profile is stressed (elevated ATR/IVOL, weak vol-target leverage, constrained risk budget).",
+            "风险画像承压：ATR/特异波动抬升，波动率目标杠杆走弱，风险预算受限。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 8.0, "position", regime_fit - 4.0,
-        "Risk factors are mixed; no clear low-vol edge or explicit risk-off warning.",
+        "风险因子分歧，暂无明确低波优势或显性避险警报。",
         evidence,
     )
 
@@ -1676,18 +1676,18 @@ def _strategy_limit_up(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 4 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 60 + min(22, bull_hits * 4), confidence, "intraday", regime_fit + 4,
-            "Board ecology is constructive (first/second-board continuity with controllable break risk and theme diffusion).",
+            "涨停生态偏建设性：首板/二板延续性尚可，断板风险可控，主题扩散仍在。",
             evidence,
         )
     if bear_hits >= 4 and bear_hits >= bull_hits:
         return _mk_signal(
             "bearish", 60 + min(22, bear_hits * 4), confidence, "intraday", regime_fit,
-            "Board cycle shows late-stage stress (break-board/first-yin risk and crowded high-cycle behavior).",
+            "连板周期显露后段压力：断板/首阴风险与高位拥挤行为同时升高。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 7.0, "intraday", regime_fit - 5.0,
-        "Board-ecology signals are mixed; continuity and break risk are both present.",
+        "涨停生态信号分歧，延续性与断板风险并存。",
         evidence,
     )
 
@@ -1751,18 +1751,18 @@ def _strategy_rotation(features: dict, regime: dict, ctx: dict) -> dict:
     if bull_hits >= 4 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 58 + min(22, bull_hits * 4), confidence, "swing", regime_fit + 4,
-            "Style rotation is supportive: size/style bias and theme diffusion align with positive flow backdrop.",
+            "风格轮动提供支撑：市值/风格偏向与主题扩散、资金背景方向一致。",
             evidence,
         )
     if bear_hits >= 4 and bear_hits >= bull_hits:
         return _mk_signal(
             "bearish", 58 + min(22, bear_hits * 4), confidence, "swing", regime_fit,
-            "Style/theme rotation is fragile: growth/value legs lose support and diffusion narrows.",
+            "风格/主题轮动偏脆弱：成长或价值腿支撑减弱，扩散宽度收窄。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 7.0, "swing", regime_fit - 5.0,
-        "Style and theme rotation signals are mixed; wait for clearer cross-style confirmation.",
+        "风格与主题轮动信号分歧，等待跨风格确认更清晰。",
         evidence,
     )
 
@@ -1929,34 +1929,34 @@ def _strategy_value_repair(features: dict, regime: dict, ctx: dict) -> dict:
     if not valuation_known and not quality_known:
         return _mk_signal(
             "neutral", 48, 28, "position", 52,
-            "Valuation-repair inputs are too sparse; keep neutral until data is richer.",
+            "估值修复输入数据偏稀疏，维持中性等待财务数据更完整。",
             evidence,
         )
 
     if trap_hits >= 2 and quality_support == 0:
         return _mk_signal(
             "bearish", 62 + min(14, trap_hits * 4), confidence, "position", regime_fit,
-            "Cheap-looking multiples are likely a value trap due to weak quality/risk metrics.",
+            "表面低估值可能是价值陷阱，质量与风险指标支撑不足。",
             evidence,
         )
 
     if valuation_hits >= 2 and trap_hits == 0 and (quality_support >= 1 or not quality_known):
         return _mk_signal(
             "bullish", 58 + min(18, valuation_hits * 4 + quality_support * 2), confidence, "position", regime_fit + 5,
-            "Valuation is compressed while fundamentals are stable enough for potential value-repair.",
+            "估值已被压缩，而基本面稳定性尚可，存在估值修复可能。",
             evidence,
         )
 
     if overvalued_hits >= 2 and (quality_support == 0 or trap_hits >= 1):
         return _mk_signal(
             "bearish", 58 + min(18, overvalued_hits * 4 + trap_hits * 3), confidence, "position", regime_fit,
-            "Valuation is stretched without sufficient quality support, limiting repair upside.",
+            "估值偏高但质量支撑不足，限制进一步修复空间。",
             evidence,
         )
 
     return _mk_signal(
         "neutral", 52, confidence - 4, "position", regime_fit - 2,
-        "Valuation and quality signals are mixed; no clean value-repair setup yet.",
+        "估值与质量信号分歧，尚未形成清晰估值修复结构。",
         evidence,
     )
 
@@ -2097,34 +2097,34 @@ def _strategy_quality_improvement(features: dict, regime: dict, ctx: dict) -> di
     if not quality_known:
         return _mk_signal(
             "neutral", 48, 30, "position", 50,
-            "Quality-improvement inputs are sparse; keep neutral until richer financial data is available.",
+            "质量改善输入数据偏稀疏，维持中性等待更完整财务数据。",
             evidence,
         )
 
     if improve_hits >= 3 and degrade_hits == 0:
         return _mk_signal(
             "bullish", 58 + min(20, improve_hits * 4), confidence, "position", regime_fit + 7,
-            "Profitability and cash-flow quality are improving with controlled balance-sheet risk.",
+            "盈利能力与现金流质量改善，同时资产负债表风险仍可控。",
             evidence,
         )
 
     if degrade_hits >= 3 and improve_hits <= 1:
         return _mk_signal(
             "bearish", 58 + min(20, degrade_hits * 4), confidence, "position", regime_fit,
-            "Core quality metrics are deteriorating, raising downside and value-trap risk.",
+            "核心质量指标恶化，下行风险与价值陷阱风险上升。",
             evidence,
         )
 
     if degrade_hits >= 2 and accrual_risk:
         return _mk_signal(
             "bearish", 62 + min(14, degrade_hits * 3), confidence, "position", regime_fit - 2,
-            "Earnings quality looks fragile (profit/revenue mismatch plus weak supporting metrics).",
+            "盈利质量偏脆弱：利润/收入错配，且支撑指标偏弱。",
             evidence,
         )
 
     return _mk_signal(
         "neutral", 52, confidence - 5, "position", regime_fit - 3,
-        "Quality factors are mixed; no clear improvement or deterioration trend.",
+        "质量因子分歧，暂无明确改善或恶化趋势。",
         evidence,
     )
 
@@ -2216,18 +2216,18 @@ def _strategy_calendar_seasonality(features: dict, regime: dict, ctx: dict) -> d
         if seasonality_score >= 12:
             return _mk_signal(
                 "bullish", min(78.0, 56.0 + seasonality_score * 0.75), confidence, "swing", regime_fit,
-                "Long-window calendar effects are supportive (weekday/month-position/lunar-holiday signals align).",
+                "长窗口日历效应偏支撑：星期、月内位置与春节窗口信号一致。",
                 evidence,
             )
         if seasonality_score <= -12:
             return _mk_signal(
                 "bearish", min(78.0, 56.0 + abs(seasonality_score) * 0.75), confidence, "swing", regime_fit,
-                "Long-window calendar effects are adverse (weekday/month-position/lunar-holiday signals align to risk-off).",
+                "长窗口日历效应偏不利：星期、月内位置与春节窗口共同指向风险收缩。",
                 evidence,
             )
         return _mk_signal(
             "neutral", 52, confidence - 7.0, "swing", regime_fit - 4.0,
-            "Long-window calendar factors are mixed; no clear seasonal edge right now.",
+            "长窗口日历因子分歧，当前没有清晰季节性优势。",
             evidence,
         )
 
@@ -2235,7 +2235,7 @@ def _strategy_calendar_seasonality(features: dict, regime: dict, ctx: dict) -> d
     if len(candles) < 20:
         return _mk_signal(
             "neutral", 48, 30, "swing", 50,
-            "Not enough bars to estimate calendar/seasonality effects.",
+            "K 线样本不足，暂无法稳定估计日历/季节效应。",
             {"candles_used": len(candles), "calendar_mode": "fallback_short"},
         )
     weekday_returns: dict[int, list[float]] = {i: [] for i in range(5)}
@@ -2278,18 +2278,18 @@ def _strategy_calendar_seasonality(features: dict, regime: dict, ctx: dict) -> d
     if seasonality_score >= 12:
         return _mk_signal(
             "bullish", min(74.0, 55.0 + seasonality_score * 0.7), confidence, "swing", regime_fit,
-            "Short-window calendar effects are supportive.",
+            "短窗口日历效应偏支撑。",
             evidence,
         )
     if seasonality_score <= -12:
         return _mk_signal(
             "bearish", min(74.0, 55.0 + abs(seasonality_score) * 0.7), confidence, "swing", regime_fit,
-            "Short-window calendar effects indicate elevated pullback risk.",
+            "短窗口日历效应提示回撤风险升高。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 6.0, "swing", regime_fit - 4.0,
-        "Calendar effects are mixed under fallback mode.",
+        "兜底模式下日历效应分歧。",
         evidence,
     )
 
@@ -2379,27 +2379,27 @@ def _strategy_intraday_timing(features: dict, regime: dict, ctx: dict) -> dict:
     if (momentum_follow and support_hits >= 2 and risk_hits <= 1) or (panic_reversal and support_hits >= 2):
         return _mk_signal(
             "bullish", 58 + min(18, support_hits * 4), confidence, "intraday", regime_fit + 5,
-            "Overnight/intraday microstructure is supportive with adequate liquidity/flow backing.",
+            "隔夜/日内微观结构偏支撑，流动性与资金配合尚可。",
             evidence,
         )
 
     if gap_fade and (risk_hits >= 2 or support_hits <= 1):
         return _mk_signal(
             "bearish", 60 + min(16, risk_hits * 4), confidence, "intraday", regime_fit,
-            "Gap-fade and crowding risk suggest weak intraday follow-through quality.",
+            "缺口回落与拥挤风险提示日内跟随质量偏弱。",
             evidence,
         )
 
     if risk_hits >= 3:
         return _mk_signal(
             "bearish", 64 + min(12, risk_hits * 3), confidence, "intraday", regime_fit - 2,
-            "Microstructure risk is elevated (crowding/turnover/flow mismatch).",
+            "微观结构风险升高：拥挤、换手与资金行为不匹配。",
             evidence,
         )
 
     return _mk_signal(
         "neutral", 52, confidence - 8.0, "intraday", regime_fit - 4.0,
-        "Intraday microstructure is mixed; no clean timing edge.",
+        "日内微观结构分歧，暂无清晰择时优势。",
         evidence,
     )
 
@@ -2550,18 +2550,18 @@ def _strategy_pair_relative_strength(features: dict, regime: dict, ctx: dict) ->
     if alpha_score >= 12 and bull_hits >= 3 and bull_hits > bear_hits:
         return _mk_signal(
             "bullish", 57 + min(20, bull_hits * 4), confidence, "position", regime_fit + 4,
-            "Industry pair spread, ETF style-pair bias, and beta-neutral proxy jointly support long-leg alpha.",
+            "行业配对价差、ETF 风格配对偏向与 beta 中性代理共同支持多头相对收益。",
             evidence,
         )
     if alpha_score <= -12 and bear_hits >= 3 and bear_hits > bull_hits:
         return _mk_signal(
             "bearish", 57 + min(20, bear_hits * 4), confidence, "position", regime_fit,
-            "Industry pair spread is adverse and beta/ETF pair proxies indicate relative underperformance risk.",
+            "行业配对价差不利，beta/ETF 配对代理提示相对跑输风险。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 6.0, "position", regime_fit - 4.0,
-        "Pair-neutral signals are mixed; keep neutral until industry spread and ETF/beta legs re-align.",
+        "配对中性信号分歧，等待行业价差与 ETF/beta 分支重新对齐。",
         evidence,
     )
 
@@ -2671,25 +2671,25 @@ def _strategy_event_drift(features: dict, regime: dict, ctx: dict) -> dict:
     if event_intensity < 20:
         return _mk_signal(
             "neutral", 48, max(25.0, confidence - 15.0), "swing", max(45.0, regime_fit - 10.0),
-            "Event visibility is sparse; no reliable post-event drift edge.",
+            "事件可见度偏低，暂无可靠事件后漂移优势。",
             evidence,
         )
 
     if drift_score >= 16 and (pos_hits >= neg_hits or _f(pead.get("pead_drift_5d_pct")) > 0):
         return _mk_signal(
             "bullish", min(80.0, 55.0 + drift_score * 0.6), confidence, "swing", regime_fit,
-            "Positive event surprise and PEAD proxy support upside drift in the next 1-20 trading days.",
+            "正向事件超预期与 PEAD 代理支持未来 1-20 个交易日向上漂移。",
             evidence,
         )
     if drift_score <= -16 and (neg_hits >= pos_hits or _f(pead.get("pead_drift_5d_pct")) < 0):
         return _mk_signal(
             "bearish", min(80.0, 55.0 + abs(drift_score) * 0.6), confidence, "swing", regime_fit,
-            "Negative event surprise and PEAD proxy indicate elevated downside drift risk.",
+            "负向事件超预期与 PEAD 代理提示下行漂移风险升高。",
             evidence,
         )
     return _mk_signal(
         "neutral", 52, confidence - 6.0, "swing", regime_fit - 4.0,
-        "Event intensity exists, but positive and negative catalysts are mixed.",
+        "事件强度存在，但正负催化相互抵消。",
         evidence,
     )
 
@@ -2697,7 +2697,7 @@ def _strategy_event_drift(features: dict, regime: dict, ctx: dict) -> dict:
 def _strategy_placeholder(_: dict, __: dict, spec: StrategySpec) -> dict:
     return _mk_signal(
         "neutral", 45, 20, "position", 45,
-        f"{spec.title} skeleton is registered; calibration is planned in {spec.phase_hint}.",
+        f"{spec.title} 已注册骨架，校准计划在 {spec.phase_hint} 阶段完成。",
         {"status": "skeleton"},
     )
 
@@ -2722,7 +2722,7 @@ def _run_spec(spec: StrategySpec, features: dict, regime: dict, market: str, ctx
     if spec.requires_a_share and market != "A":
         sig = _mk_signal(
             "skip", 0, 100, "position", 0,
-            "Strategy is currently scoped to A-share microstructure.",
+            "该策略当前只适用于 A 股微观结构。",
             {"market": market},
         )
     else:

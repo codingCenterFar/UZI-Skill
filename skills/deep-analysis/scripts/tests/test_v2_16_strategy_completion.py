@@ -118,14 +118,14 @@ def test_strategy_engine_has_t312_t315_enhancements():
         "T312 missing: limit-up ecology should include first/second board and T-board pattern stats"
     assert "height_cycle_score" in src and "first_yin_break_hits" in src, \
         "T312 missing: limit-up ecology should include break-board and height-cycle indicators"
-    assert "def _strategy_limit_up(" in src and "Board ecology is constructive" in src, \
+    assert "def _strategy_limit_up(" in src and "涨停生态偏建设性" in src, \
         "T312 missing: strategy_limit_up should consume enhanced board-ecology evidence"
 
     assert "def _style_rotation_proxies(" in src and "growth_style_score" in src and "value_dividend_style_score" in src, \
         "T315 missing: rotation should include growth/value-dividend style scoring"
     assert "theme_diffusion_score" in src and "size_style" in src and "style_bias" in src, \
         "T315 missing: rotation should include theme diffusion and size/style regime tags"
-    assert "Style rotation is supportive" in src and "Style/theme rotation is fragile" in src, \
+    assert "风格轮动提供支撑" in src and "风格/主题轮动偏脆弱" in src, \
         "T315 missing: strategy_rotation should emit enhanced style/theme narratives"
 
 
@@ -178,7 +178,7 @@ def test_strategy_engine_has_t316_pair_neutral_enhancement():
         "T316 missing: pair strategy evidence should include ETF pair legs and hedge ratio"
     assert "pair_alpha_score" in src and "rel_mom_vs_industry_pct" in src, \
         "T316 missing: pair strategy should include industry-relative spread score"
-    assert "Industry pair spread, ETF style-pair bias, and beta-neutral proxy jointly support long-leg alpha." in src, \
+    assert "行业配对价差、ETF 风格配对偏向与 beta 中性代理共同支持多头相对收益。" in src, \
         "T316 missing: pair strategy should emit upgraded narrative for neutral/pair framework"
 
 

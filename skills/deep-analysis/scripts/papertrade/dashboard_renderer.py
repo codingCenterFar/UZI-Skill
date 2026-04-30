@@ -18,6 +18,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from papertrade import api  # noqa: E402
 from papertrade.config import load_config  # noqa: E402
+from papertrade.i18n import display_label, normalize_lang, t  # noqa: E402
 from papertrade.ledger import connect, init_db  # noqa: E402
 
 
@@ -94,8 +95,8 @@ def _state_class(value: Any) -> str:
     return "neutral"
 
 
-def _badge(value: Any) -> str:
-    text = _esc(value or "-")
+def _badge(value: Any, *, lang: str = "zh-CN") -> str:
+    text = _esc(display_label(value, lang=lang))
     return f'<span class="badge {_state_class(value)}">{text}</span>'
 
 
@@ -112,29 +113,81 @@ def _empty_row(colspan: int, text: str) -> str:
     return f'<tr class="empty"><td colspan="{colspan}">{_esc(text)}</td></tr>'
 
 
-def _render_watchlist(items: list[dict[str, Any]]) -> str:
+def _join_labels(values: list[Any], *, lang: str, limit: int | None = None) -> str:
+    selected = values[:limit] if limit is not None else values
+    return ", ".join(display_label(x, lang=lang) for x in selected)
+
+
+def _format_event_payload(payload: Any, *, lang: str) -> str:
+    if not isinstance(payload, dict):
+        return str(payload or "")
+    if lang == "en":
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    fields = [
+        ("ticker", "代码"),
+        ("action", "动作"),
+        ("score_final", "分数"),
+        ("signal_id", "信号ID"),
+        ("as_of_date", "日期"),
+        ("loop_no", "循环"),
+        ("ticker_count", "标的数"),
+        ("failed_count", "失败数"),
+        ("success_count", "成功数"),
+        ("created_count", "创建数"),
+        ("expired_day_count", "过期天数"),
+    ]
+    parts: list[str] = []
+    for key, label in fields:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if key == "action":
+            value = display_label(value, lang=lang)
+        elif isinstance(value, float):
+            value = f"{value:.3f}".rstrip("0").rstrip(".")
+        parts.append(f"{label} {value}")
+
+    latest_nav = payload.get("latest_nav")
+    if isinstance(latest_nav, dict):
+        nav_bits = []
+        for key, label in (("as_of_date", "日期"), ("cash", "现金"), ("equity", "权益")):
+            if key in latest_nav:
+                value = latest_nav.get(key)
+                if isinstance(value, (int, float)) and key in {"cash", "equity"}:
+                    value = _num(value, 2)
+                nav_bits.append(f"{label} {value}")
+        if nav_bits:
+            parts.append("最新净值：" + "，".join(nav_bits))
+
+    if not parts:
+        return f"详情已记录（{len(payload)} 项）"
+    return " · ".join(parts)
+
+
+def _render_watchlist(items: list[dict[str, Any]], *, lang: str) -> str:
     rows = []
     for item in items:
         rows.append(
             f"""
             <tr>
               <td class="mono">{_esc(item.get("ticker"))}</td>
-              <td>{_badge(item.get("action"))}</td>
+              <td>{_badge(item.get("action"), lang=lang)}</td>
               <td class="num">{_num(item.get("score_final"), 1)}</td>
               <td class="num">{_num(item.get("last_price"), 2)}</td>
               <td class="num">{_pct(item.get("change_pct"))}</td>
-              <td>{_esc(item.get("decision_basis"))}</td>
+              <td>{_esc(display_label(item.get("decision_basis"), lang=lang))}</td>
               <td class="num">{_esc(item.get("analysis_age_ms"))}</td>
-              <td>{_esc(",".join(item.get("staleness_flags") or []))}</td>
+              <td>{_esc(_join_labels(item.get("staleness_flags") or [], lang=lang))}</td>
             </tr>
             """
         )
     if not rows:
-        rows.append(_empty_row(8, "暂无 watchlist 标的"))
+        rows.append(_empty_row(8, "暂无观察标的"))
     return "\n".join(rows)
 
 
-def _render_candidates(items: list[dict[str, Any]]) -> str:
+def _render_candidates(items: list[dict[str, Any]], *, lang: str) -> str:
     rows = []
     for item in items:
         reasons = item.get("reasons") or []
@@ -144,17 +197,17 @@ def _render_candidates(items: list[dict[str, Any]]) -> str:
             <tr>
               <td class="num">{_esc(item.get("rank"))}</td>
               <td class="mono">{_esc(item.get("ticker"))}</td>
-              <td>{_badge(item.get("bucket"))}</td>
-              <td>{_badge(item.get("action_state"))}</td>
+              <td>{_badge(item.get("bucket"), lang=lang)}</td>
+              <td>{_badge(item.get("action_state"), lang=lang)}</td>
               <td class="num">{_num(item.get("candidate_score"), 1)}</td>
               <td class="num">{_num(item.get("trigger_price"), 3)}</td>
-              <td>{_badge(item.get("quote_status"))}</td>
+              <td>{_badge(item.get("quote_status"), lang=lang)}</td>
               <td class="num">{_num(item.get("quote_price"), 3)}</td>
               <td class="num">{_pct(item.get("quote_change_pct"))}</td>
               <td class="num">{_esc(item.get("analysis_age_ms"))}</td>
               <td class="num">{_esc(item.get("quote_age_ms"))}</td>
-              <td>{_esc(", ".join(str(x) for x in reasons[:3]))}</td>
-              <td>{_esc(", ".join(str(x) for x in flags))}</td>
+              <td>{_esc(_join_labels(reasons, lang=lang, limit=3))}</td>
+              <td>{_esc(_join_labels(flags, lang=lang))}</td>
             </tr>
             """
         )
@@ -185,20 +238,20 @@ def _render_positions(items: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-def _render_orders(items: list[dict[str, Any]]) -> str:
+def _render_orders(items: list[dict[str, Any]], *, lang: str) -> str:
     rows = []
     for item in items:
         rows.append(
             f"""
             <tr>
               <td class="mono">{_esc(item.get("intent_id"))}</td>
-              <td>{_badge(item.get("status"))}</td>
+              <td>{_badge(item.get("status"), lang=lang)}</td>
               <td class="mono">{_esc(item.get("ticker"))}</td>
-              <td>{_esc(item.get("side"))}</td>
+              <td>{_esc(display_label(item.get("side"), lang=lang))}</td>
               <td class="num">{_esc(item.get("qty"))}</td>
               <td class="num">{_esc(item.get("filled_qty"))}</td>
               <td class="num">{_num(item.get("avg_fill_price"), 3)}</td>
-              <td>{_esc(item.get("source"))}</td>
+              <td>{_esc(display_label(item.get("source"), lang=lang))}</td>
             </tr>
             """
         )
@@ -207,17 +260,16 @@ def _render_orders(items: list[dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-def _render_events(events: list[dict[str, Any]]) -> str:
+def _render_events(events: list[dict[str, Any]], *, lang: str) -> str:
     rows = []
     for event in events[:40]:
-        payload = event.get("payload")
-        payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True) if isinstance(payload, dict) else str(payload or "")
+        payload_text = _format_event_payload(event.get("payload"), lang=lang)
         rows.append(
             f"""
             <li>
-              <span>{_badge(event.get("event_type"))}</span>
-              <code>{_esc(event.get("entity_type"))}:{_esc(event.get("entity_id"))}</code>
-              <em>{_esc(event.get("status"))}</em>
+              <span>{_badge(event.get("event_type"), lang=lang)}</span>
+              <code>{_esc(display_label(event.get("entity_type"), lang=lang))}:{_esc(event.get("entity_id"))}</code>
+              <em>{_esc(display_label(event.get("status"), lang=lang))}</em>
               <small>{_esc(payload_text[:180])}</small>
             </li>
             """
@@ -230,10 +282,12 @@ def _render_events(events: list[dict[str, Any]]) -> str:
 def render_dashboard_html(
     conn: sqlite3.Connection,
     *,
-    title: str = "Papertrade Realtime Desk",
+    title: str = "模拟实盘看板",
     generated_at: str | None = None,
     refresh_seconds: int | None = None,
+    lang: str = "zh-CN",
 ) -> str:
+    lang = normalize_lang(lang)
     payload = build_dashboard_payload(conn)
     dashboard = payload["dashboard"]
     metrics = payload["metrics"]
@@ -254,10 +308,10 @@ def render_dashboard_html(
     runtime_summary = dashboard.get("runtime") or {}
     refresh_s = int(refresh_seconds or 0)
     refresh_meta = f'\n  <meta http-equiv="refresh" content="{refresh_s}" />' if refresh_s > 0 else ""
-    refresh_note = f" · auto refresh {refresh_s}s" if refresh_s > 0 else ""
+    refresh_note = f" · {t('auto_refresh', lang=lang)} {refresh_s}s" if refresh_s > 0 else ""
 
     return f"""<!doctype html>
-<html lang="zh-CN">
+<html lang="{_esc(lang)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -386,78 +440,78 @@ def render_dashboard_html(
   <header>
     <div>
       <h1>{_esc(title)}</h1>
-      <div class="sub">generated {_esc(generated)} · runtime {_badge(runtime_status)} · health {_badge(health_status)}{_esc(refresh_note)}</div>
+      <div class="sub">{_esc(t("generated", lang=lang))} {_esc(generated)} · {t("runtime", lang=lang)} {_badge(runtime_status, lang=lang)} · {t("health", lang=lang)} {_badge(health_status, lang=lang)}{_esc(refresh_note)}</div>
     </div>
     <div class="actions">
-      <button type="button" onclick="location.reload()">Refresh</button>
-      <button type="button" onclick="window.print()">Print</button>
+      <button type="button" onclick="location.reload()">{_esc(t("refresh", lang=lang))}</button>
+      <button type="button" onclick="window.print()">{_esc(t("print", lang=lang))}</button>
     </div>
   </header>
   <main>
     <div class="metrics">
-      {_kv("Equity", _num(dashboard.get("equity"), 2), "good")}
-      {_kv("Cash", _num(dashboard.get("cash"), 2))}
-      {_kv("Market Value", _num(dashboard.get("position_market_value"), 2))}
-      {_kv("Return", _pct(dashboard.get("cumulative_return_pct")), "good" if _num(dashboard.get("cumulative_return_pct")) != "-" else "neutral")}
-      {_kv("Drawdown", _pct(dashboard.get("drawdown_pct")), "bad" if _f(dashboard.get("drawdown_pct")) < 0 else "neutral")}
-      {_kv("Event Lag", _esc(freshness.get("event_queue_lag", 0)), "warn" if _f(freshness.get("event_queue_lag")) > 0 else "neutral")}
+      {_kv(t("equity", lang=lang), _num(dashboard.get("equity"), 2), "good")}
+      {_kv(t("cash", lang=lang), _num(dashboard.get("cash"), 2))}
+      {_kv(t("market_value", lang=lang), _num(dashboard.get("position_market_value"), 2))}
+      {_kv(t("return", lang=lang), _pct(dashboard.get("cumulative_return_pct")), "good" if _num(dashboard.get("cumulative_return_pct")) != "-" else "neutral")}
+      {_kv("回撤" if lang == "zh-CN" else "Drawdown", _pct(dashboard.get("drawdown_pct")), "bad" if _f(dashboard.get("drawdown_pct")) < 0 else "neutral")}
+      {_kv(t("event_lag", lang=lang), _esc(freshness.get("event_queue_lag", 0)), "warn" if _f(freshness.get("event_queue_lag")) > 0 else "neutral")}
     </div>
     <div class="metrics">
-      {_kv("Quote Freshness", _esc(metrics.get("quote_freshness_ms", freshness.get("quote_freshness_ms", 0))) + " ms")}
-      {_kv("Analysis Freshness", _esc(metrics.get("analysis_freshness_ms", freshness.get("analysis_freshness_ms", 0))) + " ms")}
-      {_kv("Candidates", _esc(payload["candidates"].get("item_count", 0)))}
-      {_kv("Wait / Avoid", _esc(candidate_buckets.get("WAIT", 0)) + " / " + _esc(candidate_buckets.get("AVOID", 0)))}
-      {_kv("Quote Risk", _esc(candidate_freshness.get("quote_missing_count", 0)) + " / " + _esc(candidate_freshness.get("quote_failed_count", 0)))}
-      {_kv("Last Loop", _esc(runtime_summary.get("last_loop_id") or "-"))}
+      {_kv(t("quote_freshness", lang=lang), _esc(metrics.get("quote_freshness_ms", freshness.get("quote_freshness_ms", 0))) + " ms")}
+      {_kv(t("analysis_freshness", lang=lang), _esc(metrics.get("analysis_freshness_ms", freshness.get("analysis_freshness_ms", 0))) + " ms")}
+      {_kv(t("candidates", lang=lang), _esc(payload["candidates"].get("item_count", 0)))}
+      {_kv(t("wait_avoid", lang=lang), _esc(candidate_buckets.get("WAIT", 0)) + " / " + _esc(candidate_buckets.get("AVOID", 0)))}
+      {_kv(t("quote_risk", lang=lang), _esc(candidate_freshness.get("quote_missing_count", 0)) + " / " + _esc(candidate_freshness.get("quote_failed_count", 0)))}
+      {_kv(t("last_loop", lang=lang), _esc(runtime_summary.get("last_loop_id") or "-"))}
     </div>
     <div class="layout">
       <div>
         <section>
-          <h2>Candidate Pool</h2>
+          <h2>{_esc(t("candidate_pool", lang=lang))}</h2>
           <table>
-            <thead><tr><th class="num">Rank</th><th>Ticker</th><th>Bucket</th><th>Action</th><th class="num">Score</th><th class="num">Trigger</th><th>Quote</th><th class="num">Price</th><th class="num">Chg</th><th class="num">Analysis Age</th><th class="num">Quote Age</th><th>Reasons</th><th>Flags</th></tr></thead>
-            <tbody>{_render_candidates(candidates)}</tbody>
+            <thead><tr><th class="num">{_esc(t("rank", lang=lang))}</th><th>{_esc(t("ticker", lang=lang))}</th><th>{_esc(t("bucket", lang=lang))}</th><th>{_esc("动作" if lang == "zh-CN" else "Action")}</th><th class="num">{_esc(t("score", lang=lang))}</th><th class="num">{_esc(t("trigger", lang=lang))}</th><th>{_esc(t("quote", lang=lang))}</th><th class="num">{_esc(t("price", lang=lang))}</th><th class="num">{_esc(t("change", lang=lang))}</th><th class="num">{_esc(t("analysis_age", lang=lang))}</th><th class="num">{_esc(t("quote_age", lang=lang))}</th><th>{_esc(t("reasons", lang=lang))}</th><th>{_esc(t("flags", lang=lang))}</th></tr></thead>
+            <tbody>{_render_candidates(candidates, lang=lang)}</tbody>
           </table>
         </section>
         <section>
-          <h2>Watchlist</h2>
+          <h2>{_esc(t("watchlist", lang=lang))}</h2>
           <table>
-            <thead><tr><th>Ticker</th><th>Action</th><th class="num">Score</th><th class="num">Price</th><th class="num">Chg</th><th>Basis</th><th class="num">Analysis Age</th><th>Flags</th></tr></thead>
-            <tbody>{_render_watchlist(watchlist)}</tbody>
+            <thead><tr><th>{_esc(t("ticker", lang=lang))}</th><th>{_esc("动作" if lang == "zh-CN" else "Action")}</th><th class="num">{_esc(t("score", lang=lang))}</th><th class="num">{_esc(t("price", lang=lang))}</th><th class="num">{_esc(t("change", lang=lang))}</th><th>{_esc(t("basis", lang=lang))}</th><th class="num">{_esc(t("analysis_age", lang=lang))}</th><th>{_esc(t("flags", lang=lang))}</th></tr></thead>
+            <tbody>{_render_watchlist(watchlist, lang=lang)}</tbody>
           </table>
         </section>
         <section>
-          <h2>Positions</h2>
+          <h2>{_esc(t("positions", lang=lang))}</h2>
           <table>
-            <thead><tr><th>Ticker</th><th class="num">Qty</th><th class="num">Sellable</th><th class="num">Avg</th><th class="num">Last</th><th class="num">MV</th><th class="num">PnL</th><th class="num">Lots</th></tr></thead>
+            <thead><tr><th>{_esc(t("ticker", lang=lang))}</th><th class="num">{_esc(t("qty", lang=lang))}</th><th class="num">{_esc(t("sellable", lang=lang))}</th><th class="num">{_esc(t("avg", lang=lang))}</th><th class="num">{_esc(t("last", lang=lang))}</th><th class="num">{_esc("市值" if lang == "zh-CN" else "MV")}</th><th class="num">PnL</th><th class="num">{_esc(t("lots", lang=lang))}</th></tr></thead>
             <tbody>{_render_positions(positions)}</tbody>
           </table>
         </section>
         <section>
-          <h2>Orders</h2>
+          <h2>{_esc(t("orders", lang=lang))}</h2>
           <table>
-            <thead><tr><th>Intent</th><th>Status</th><th>Ticker</th><th>Side</th><th class="num">Qty</th><th class="num">Filled</th><th class="num">Avg Px</th><th>Source</th></tr></thead>
-            <tbody>{_render_orders(orders)}</tbody>
+            <thead><tr><th>{_esc(t("intent", lang=lang))}</th><th>{_esc(t("status", lang=lang))}</th><th>{_esc(t("ticker", lang=lang))}</th><th>{_esc(t("side", lang=lang))}</th><th class="num">{_esc(t("qty", lang=lang))}</th><th class="num">{_esc(t("filled", lang=lang))}</th><th class="num">{_esc(t("avg_px", lang=lang))}</th><th>{_esc(t("source", lang=lang))}</th></tr></thead>
+            <tbody>{_render_orders(orders, lang=lang)}</tbody>
           </table>
         </section>
       </div>
       <aside>
         <section>
-          <h2>Runtime</h2>
+          <h2>{_esc(t("runtime", lang=lang))}</h2>
           <table>
             <tbody>
-              <tr><th>Status</th><td>{_badge(runtime_status)}</td></tr>
-              <tr><th>Session</th><td class="mono">{_esc(runtime_summary.get("session_id") or "-")}</td></tr>
-              <tr><th>Last Loop</th><td class="mono">{_esc(runtime_summary.get("last_loop_id") or "-")}</td></tr>
-              <tr><th>Health</th><td>{_badge(health_status)}</td></tr>
-              <tr><th>Health Error</th><td>{_esc((payload.get("health_error") or {}).get("message") or "-")}</td></tr>
-              <tr><th>Runtime Error</th><td>{_esc((payload.get("runtime_error") or {}).get("message") or "-")}</td></tr>
+              <tr><th>{_esc(t("status", lang=lang))}</th><td>{_badge(runtime_status, lang=lang)}</td></tr>
+              <tr><th>{_esc(t("session", lang=lang))}</th><td class="mono">{_esc(runtime_summary.get("session_id") or "-")}</td></tr>
+              <tr><th>{_esc(t("last_loop", lang=lang))}</th><td class="mono">{_esc(runtime_summary.get("last_loop_id") or "-")}</td></tr>
+              <tr><th>{_esc(t("health", lang=lang))}</th><td>{_badge(health_status, lang=lang)}</td></tr>
+              <tr><th>{_esc(t("health_error", lang=lang))}</th><td>{_esc((payload.get("health_error") or {}).get("message") or "-")}</td></tr>
+              <tr><th>{_esc(t("runtime_error", lang=lang))}</th><td>{_esc((payload.get("runtime_error") or {}).get("message") or "-")}</td></tr>
             </tbody>
           </table>
         </section>
         <section>
-          <h2>Events</h2>
-          <ul class="events">{_render_events(events)}</ul>
+          <h2>{_esc(t("events", lang=lang))}</h2>
+          <ul class="events">{_render_events(events, lang=lang)}</ul>
         </section>
       </aside>
     </div>
@@ -471,12 +525,13 @@ def write_dashboard_html(
     conn: sqlite3.Connection,
     output_path: str | Path,
     *,
-    title: str = "Papertrade Realtime Desk",
+    title: str = "模拟实盘看板",
     refresh_seconds: int | None = None,
+    lang: str = "zh-CN",
 ) -> Path:
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_dashboard_html(conn, title=title, refresh_seconds=refresh_seconds), encoding="utf-8")
+    target.write_text(render_dashboard_html(conn, title=title, refresh_seconds=refresh_seconds, lang=lang), encoding="utf-8")
     return target
 
 
@@ -486,12 +541,14 @@ def create_dashboard_server(
     initial_cash: float,
     host: str = "127.0.0.1",
     port: int = 8765,
-    title: str = "Papertrade Realtime Desk",
+    title: str = "模拟实盘看板",
     refresh_seconds: int | None = 15,
+    lang: str = "zh-CN",
 ) -> ThreadingHTTPServer:
     db_file = Path(db_path)
     title_s = str(title)
     refresh_s = int(refresh_seconds or 0)
+    lang_s = normalize_lang(lang)
 
     # Prepare the schema once at startup; request handlers only read models.
     setup_conn = connect(db_file)
@@ -521,7 +578,7 @@ def create_dashboard_server(
             if path in {"/", "/dashboard.html"}:
                 conn = connect(db_file)
                 try:
-                    html_doc = render_dashboard_html(conn, title=title_s, refresh_seconds=refresh_s)
+                    html_doc = render_dashboard_html(conn, title=title_s, refresh_seconds=refresh_s, lang=lang_s)
                 finally:
                     conn.close()
                 self._send(200, "text/html; charset=utf-8", html_doc.encode("utf-8"))
@@ -555,8 +612,9 @@ def serve_dashboard(
     initial_cash: float,
     host: str = "127.0.0.1",
     port: int = 8765,
-    title: str = "Papertrade Realtime Desk",
+    title: str = "模拟实盘看板",
     refresh_seconds: int | None = 15,
+    lang: str = "zh-CN",
 ) -> None:
     server = create_dashboard_server(
         db_path=db_path,
@@ -565,6 +623,7 @@ def serve_dashboard(
         port=port,
         title=title,
         refresh_seconds=refresh_seconds,
+        lang=lang,
     )
     actual_host, actual_port = server.server_address[:2]
     print(f"http://{actual_host}:{actual_port}/")
@@ -581,7 +640,8 @@ def main() -> None:
     ap.add_argument("--config", default=None, help="optional papertrade config JSON")
     ap.add_argument("--db", default=None, help="optional SQLite db path override")
     ap.add_argument("--output", default=".cache/paper_trade/dashboard.html", help="HTML output path")
-    ap.add_argument("--title", default="Papertrade Realtime Desk", help="dashboard title")
+    ap.add_argument("--title", default="模拟实盘看板", help="dashboard title")
+    ap.add_argument("--lang", default="zh-CN", help="dashboard language: zh-CN or en")
     ap.add_argument("--refresh-seconds", type=int, default=None, help="optional browser auto-refresh interval")
     ap.add_argument("--serve", action="store_true", help="serve a local read-only dashboard")
     ap.add_argument("--host", default="127.0.0.1", help="dashboard server host")
@@ -599,12 +659,13 @@ def main() -> None:
             port=args.port,
             title=args.title,
             refresh_seconds=refresh_seconds,
+            lang=args.lang,
         )
         return
 
     conn = connect(db_path)
     init_db(conn, cfg.trade.initial_cash)
-    path = write_dashboard_html(conn, args.output, title=args.title, refresh_seconds=args.refresh_seconds)
+    path = write_dashboard_html(conn, args.output, title=args.title, refresh_seconds=args.refresh_seconds, lang=args.lang)
     conn.close()
     print(path)
 

@@ -434,10 +434,10 @@ def render_short_trading_module(syn: dict, raw: dict) -> str:
   </div>
   <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px;margin-bottom:12px;">
     <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
-      <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">SHORT SETUP SCORE</div>
+      <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">短线准备度评分</div>
       <div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:34px;font-family:Fira Code;color:{score_color};font-weight:800">{score:.1f}</div><div style="font-size:12px;color:var(--text-mid)">/ 100</div></div>
       <div style="font-size:12px;color:var(--text-bright);margin-top:6px">节奏：<strong>{_safe(st.get("rhythm"))}</strong> · 偏向：<strong>{_safe(st.get("bias"))}</strong></div>
-      <div style="font-size:12px;color:var(--text-mid);margin-top:6px">策略计数：bull {summary.get("bullish_count", 0)} / bear {summary.get("bearish_count", 0)} / neutral {summary.get("neutral_count", 0)}</div>
+      <div style="font-size:12px;color:var(--text-mid);margin-top:6px">策略计数：看多 {summary.get("bullish_count", 0)} / 看空 {summary.get("bearish_count", 0)} / 中性 {summary.get("neutral_count", 0)}</div>
     </div>
     <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-card)">
       <div style="font-family:Space Grotesk;font-size:12px;letter-spacing:.08em;color:var(--text-mid);margin-bottom:6px">仓位与关键位</div>
@@ -504,15 +504,15 @@ def _render_strategy_layer(syn: dict) -> str:
 
     eff_note = ""
     if isinstance(eff, dict) and eff.get("status") == "available":
-        eff_note = f' · 回测有效性 {len(eff.get("effective_top") or [])} effective / {len(eff.get("fragile_top") or [])} fragile'
+        eff_note = f' · 回测有效性：{len(eff.get("effective_top") or [])} 个有效 / {len(eff.get("fragile_top") or [])} 个脆弱'
 
     return f'''<section class="data-section">
-  <div class="section-title"><span>STRATEGY LAYER</span><em>A 股策略雷达</em></div>
+  <div class="section-title"><span>策略层</span><em>A 股策略雷达</em></div>
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
-    <div class="data-cell"><div class="label">Bullish</div><div class="value">{summary.get("bullish_count", 0)}</div></div>
-    <div class="data-cell"><div class="label">Bearish</div><div class="value">{summary.get("bearish_count", 0)}</div></div>
-    <div class="data-cell"><div class="label">Neutral</div><div class="value">{summary.get("neutral_count", 0)}</div></div>
-    <div class="data-cell"><div class="label">Regime</div><div class="value">{_safe(regime.get("label") or regime.get("name"))}</div></div>
+    <div class="data-cell"><div class="label">看多</div><div class="value">{summary.get("bullish_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">看空</div><div class="value">{summary.get("bearish_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">中性</div><div class="value">{summary.get("neutral_count", 0)}</div></div>
+    <div class="data-cell"><div class="label">市场环境</div><div class="value">{_safe(regime.get("label") or regime.get("name"))}</div></div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
     <div>{_top_rows(summary.get("top_bullish") or [], "var(--bull-green)", "暂无看多策略触发")}</div>
@@ -524,7 +524,7 @@ def _render_strategy_layer(syn: dict) -> str:
       <tbody>{''.join(rows) or '<tr><td colspan="6" style="padding:10px;color:var(--text-dim)">暂无策略信号</td></tr>'}</tbody>
     </table>
   </div>
-  <div style="font-size:11px;color:var(--text-dim);margin-top:8px">engine {_safe(meta.get("engine_version"))} · depth {_safe(meta.get("depth"))} · enabled {meta.get("enabled_strategy_count", 0)}{eff_note}</div>
+  <div style="font-size:11px;color:var(--text-dim);margin-top:8px">引擎 {_safe(meta.get("engine_version"))} · 深度 {_safe(meta.get("depth"))} · 启用策略 {meta.get("enabled_strategy_count", 0)}{eff_note}</div>
 </section>'''
 
 
